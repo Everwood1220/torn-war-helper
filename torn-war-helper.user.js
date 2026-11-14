@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn War Helper
 // @namespace    https://github.com/everwood1220
-// @version      0.2.67
+// @version      0.2.68
 // @description  Ranked war page: adds stats + group from your target sheet and live hospital timers to the enemy list.
 // @author       Everwood [62912]
 // @license      MIT
@@ -25,7 +25,7 @@
 // ==/UserScript==
 
 (function(){
-const TWH_VERSION = '0.2.67'; // fallback if GM_info is unavailable
+const TWH_VERSION = '0.2.68'; // fallback if GM_info is unavailable
 const twhVer = () => { try { return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || TWH_VERSION; } catch(e){ return TWH_VERSION; } };
 'use strict';
 const API = 'https://api.torn.com/v2';
@@ -178,6 +178,7 @@ async function loadMembers(){
   list.forEach(m => { map[m.id] = {name: m.name, level: m.level, state: m.status && m.status.state || '', desc: m.status && m.status.description || '', details: m.status && m.status.details || '', until: m.status && +m.status.until || 0, la: m.last_action ? {ts: +m.last_action.timestamp || 0, rel: m.last_action.relative || '', st: m.last_action.status || ''} : null}; });
   state.members = map; state.membersAt = Date.now(); state.note = '';
   paint();
+  hospBeepCatchup = false;
 }
 function onWarPage(){ return /factions\.php/.test(location.href) && /war/i.test(location.hash + location.search); }
 function schedule(){
@@ -267,6 +268,7 @@ body.twh-side [data-twh-row] > [data-twh-cell="reason"]{display:none !important}
 /* 0.2.61: Default PUSH call sound = Horn 1 (warhorn2); push-time horn stays Horn 2 (warhorn) */
 /* 0.2.60: Swapped Horn 1 / Horn 2 names */
 /* 0.2.58: Restored Delete stored data & reset */
+/* 0.2.68: Alerts/sounds/chat-call reading only while the Torn tab is in front (Torn unfocused-page rule). Missed alerts are marked fired, not replayed. */
 /* 0.2.50: settings section headings larger/bolder with dividers */
 /* 0.2.49: Reason always centered (cell + header + wrapped text), beats Torn/TornTools left alignment */
 body:not(.twh-side) [data-twh-row] > [data-twh-cell="reason"],body:not(.twh-side) [data-twh-row] > .twh-c-reason{display:flex !important;flex-direction:row !important;justify-content:center !important;align-items:center !important;text-align:center !important;padding-left:2px !important;padding-right:2px !important;min-width:0 !important;overflow:hidden !important}
@@ -431,10 +433,38 @@ let split = null;   // {a, E, O, shrink, tries, timer}
 const pairOk = (E, O) => { if(!E || !O) return true; const e = R_(E), o = R_(O); return E.isConnected && O.isConnected && e.width >= 200 && o.width >= 200 && e.height > 0 && o.height > 0 && Math.abs(o.top - e.top) <= 5 && o.left >= e.right - 2; };
 // 0.2.13: the outer side containers AND the inner member lists must both sit side by side
 const sameLine = (E, O) => pairOk(E, O) && (!split || pairOk(split.EL, split.OL));
+// 0.2.68: Torn's rules disallow alerts from a page you are not viewing.
+// tabActive uses !document.hidden and document.hasFocus(). hasFocus() is stricter
+// than hidden alone: sounds also stay off when this tab is visible but unfocused
+// (for example DevTools or another window), which avoids drawing attention to it.
+const tabActive = () => !document.hidden && document.hasFocus();
+let tabMute = false, tabWasActive = false, tabActiveSince = now(), hospBeepCatchup = false;
+const alertsAllowed = () => !tabMute && tabActive();
+function syncTabState(){
+  const on = tabActive();
+  if(on && !tabWasActive){
+    tabMute = true;
+    hospBeepCatchup = true;
+    try{ checkTimerAlerts(); }catch(e){}
+    try{ paintCall(); }catch(e){}
+    tabActiveSince = now();
+    tabMute = false;
+    tabWasActive = true;
+  } else if(!on){
+    tabWasActive = false;
+    tabMute = true;
+    try{ checkTimerAlerts(); }catch(e){}
+    try{ paintCall(); }catch(e){}
+  } else {
+    tabMute = false;
+    tabWasActive = true;
+  }
+}
 // 0.2.24: short quiet beep when a seen-in-hospital enemy comes out (once per leave)
 const beepOn = () => get('beep', true);
 let twhAudio = null, lastBeep = 0;
 function playBeep(){
+  if(!alertsAllowed()) return;
   const t0 = Date.now(); if(t0 - lastBeep < 400) return; lastBeep = t0;   // several leaving at once = one beep
   try{
     twhAudio = twhAudio || new (window.AudioContext || window.webkitAudioContext)();
@@ -731,7 +761,7 @@ function paint(){
     if(cd){
       const inH = s.state === 'Hospital' && s.until > now();
       if(inH){ hospSeen[id] = +s.until; delete outSince[id]; }
-      else if(hospSeen[id] && !outSince[id]){ outSince[id] = Math.min(now(), hospSeen[id] || now()); if(beepOn()) playBeep(); }
+      else if(hospSeen[id] && !outSince[id]){ outSince[id] = Math.min(now(), hospSeen[id] || now()); if(beepOn() && !hospBeepCatchup) playBeep(); }
       const u = inH ? String(s.until) : '0';
       if(cd.dataset.until !== u) cd.dataset.until = u;
       const os = !inH && outSince[id] ? String(outSince[id]) : '';
@@ -897,7 +927,7 @@ function classifyCall(text, strict){
 const call = {cur: null, keySeen: null, msgNext: 0, note: '', played: get('callPlayed', '')};
 function hornSound(delay){   // 0.2.46: war horn when push time arrives
   if(!callOn('callHornOn')) return;
-  setTimeout(() => playSound(get('al_hornsnd', 'warhorn'), get('al_hornvol', 100)), delay || 0);
+  setTimeout(() => { if(alertsAllowed()) playSound(get('al_hornsnd', 'warhorn'), get('al_hornvol', 100)); }, delay || 0);
 }
 function callSound(kind){
   const on = kind === 'stay' ? callOn('callStayOn') : callOn('callPushOn'); if(!on) return;
@@ -921,6 +951,7 @@ const twhBuf = {};
 function twhCtx(){ twhAudio = twhAudio || new (window.AudioContext || window.webkitAudioContext)(); if(twhAudio.state === 'suspended') twhAudio.resume(); return twhAudio; }
 function dataToAB(url){ const b = atob(url.slice(url.indexOf(',') + 1)), u = new Uint8Array(b.length); for(let i = 0; i < b.length; i++) u[i] = b.charCodeAt(i); return u.buffer; }
 function playData(url, v){
+  if(!alertsAllowed()) return;
   let ctx; try{ ctx = twhCtx(); }catch(e){ return; }
   const go = buf => { try{ const s = ctx.createBufferSource(), g = ctx.createGain(); g.gain.value = v; s.buffer = buf; s.connect(g).connect(ctx.destination); s.start(); window.__twhLastPlayed = url.length; }catch(e){} };
   const fallback = () => { try{ const a = new Audio(url); a.volume = v; a.play().catch(() => {}); }catch(e){} };
@@ -929,6 +960,7 @@ function playData(url, v){
   p.then(buf => { twhBuf[url] = buf; go(buf); }, () => { delete twhBuf[url]; fallback(); });
 }
 function playSound(name, vol){
+  if(!alertsAllowed()) return;
   const v = Math.max(0, Math.min(100, +vol)) / 100; if(!v) return;
   window.__twhLastSound = name;   // for testing
   const cs = customSnd.find(x => x.id === name);
@@ -960,8 +992,8 @@ function runAlerts(st, until, a, b){
   if(st.until !== until){ st.until = until; st.f1 = st.f2 = false; const left0 = until - now(); if(left0 <= alertAt(b)) st.f1 = st.f2 = left0 <= 0; else if(left0 <= alertAt(a)) st.f1 = false; }
   const left = until - now(); if(left <= 0) return;
   const a1 = alertAt(a), a2 = alertAt(b);
-  if(left <= a2 && !st.f2){ st.f2 = true; if(a1 >= a2) st.f1 = true; alertPlay(b); }
-  else if(left <= a1 && !st.f1){ st.f1 = true; alertPlay(a); }
+  if(left <= a2 && !st.f2){ st.f2 = true; if(a1 >= a2) st.f1 = true; if(alertsAllowed()) alertPlay(b); }
+  else if(left <= a1 && !st.f1){ st.f1 = true; if(alertsAllowed()) alertPlay(a); }
 }
 const pushAl = {until: 0}, hospAl = {until: 0};
 const me = {until: 0, state: '', next: 0, note: ''};
@@ -996,9 +1028,12 @@ function setCall(c, silent){
   if(c.kind === 'push' && !c.at) c.at = c.sent;   // no time = push now
   call.cur = c;
   if(c.kind === 'push' && c.at <= now()) c.goFired = true;
-  if(!silent && call.played !== key){
+  const stale = !c.sent || c.sent < tabActiveSince;
+  if(!silent && call.played !== key && alertsAllowed() && !stale){
     call.played = key; set('callPlayed', key);
     callSound(c.kind);   // 0.2.62: PUSH call sound (Horn 1) on arrival for timed pushes too, not only push-now
+  } else if(call.played !== key){
+    call.played = key; set('callPlayed', key);
   }
   paintCall();
 }
@@ -1042,6 +1077,7 @@ function scanChatNode(n){
   const el = n.nodeType === 1 ? n : n.parentElement; if(!el || chatSeen.has(el)) return;
   if(!el.closest(CHAT_ROOT) || el.closest('textarea,input,#twh-call')) return;
   chatSeen.add(el);
+  if(!tabActive()) return;   // 0.2.68: mark seen, don't classify lines added while the tab is in the background
   const txt = (el.textContent || '').trim(); if(!txt || txt.length > 300) return;
   const c = classifyCall(txt, true); if(!c) return;
   const box = el.closest('[class*="chat-box"],[class*="chatBox"],[class*="channel"]'), title = box ? (box.querySelector('[class*="title"],[class*="name"]') || {}).textContent || '' : '';
@@ -1052,7 +1088,7 @@ const chatMo = new MutationObserver(list => { for(const m of list) m.addedNodes.
 function paintCall(){
   let el = document.getElementById('twh-call');
   const c = call.cur, t = now();
-  if(c && c.kind === 'push' && !c.goFired && c.at <= t){ c.goFired = true; c.dismissed = false; if(call.played !== c.key + ':go'){ call.played = c.key + ':go'; set('callPlayed', call.played); if(callOn('callHornOn')) hornSound(); else callSound('push'); } }
+  if(c && c.kind === 'push' && !c.goFired && c.at <= t){ c.goFired = true; c.dismissed = false; if(call.played !== c.key + ':go'){ call.played = c.key + ':go'; set('callPlayed', call.played); if(alertsAllowed()){ if(callOn('callHornOn')) hornSound(); else callSound('push'); } } }
   const age = c ? (c.kind === 'push' ? t - c.at : t - c.sent) : 0;
   const show = c && callOn('callBanner') && !c.dismissed && (c.kind === 'stay' ? age <= STAY_SHOW : age <= GO_SHOW);
   if(!show){ if(el) el.style.display = 'none'; return; }
@@ -1132,7 +1168,7 @@ function ui(){
     '<label class="twh-row"><input type="checkbox" id="twh-hosp2on"> Final alert at <input type="text" id="twh-hosp2at" maxlength="6" inputmode="numeric" title="Minutes:seconds left (0:10 to 60:00)" style="width:58px;margin:0 4px;padding:3px"> left</label>' + '<div class="twh-arow"><select id="twh-hosp2snd" style="width:auto;max-width:140px;margin:0 6px 0 0;padding:3px">' + sndOpts() + '</select><button data-twhtest="hosp2">▶ Test</button><input type="range" min="0" max="100" id="twh-hosp2vol" style="width:90px;margin:0 0 0 6px;padding:0"></div>' +
     '<div class="twh-sec">Custom sounds</div><div class="twh-arow" style="margin-left:0"><span>Add your own sound</span><input type="file" id="twh-sndfile" accept="audio/*" style="max-width:170px;margin:0 0 0 6px;padding:2px"></div><div id="twh-sndlist"></div><div id="twh-sndmsg" style="font-size:12px;color:#9be7a9"></div>' +
     '<div class="twh-sec">Termed war max <span class="twh-secsub">(blank = off)</span></div><label class="twh-row twh-cap">Enemy team max <input id="twh-emax" name="twh-emax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our team max <input id="twh-omax" name="twh-omax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our player max <input id="twh-pmax" name="twh-pmax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label>' +
-    '<div class="twh-sec">FAQ</div><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What API key do I need?</summary><div style="padding:2px 0 4px 12px;opacity:.9">A Limited Access key from Torn (Settings &gt; API Keys). Paste it at the top and hit Save.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sound?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Click the page once after it loads (browsers block sound until you do). Check the alert toggles and volume here, and use ▶ Test.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Horn 1 vs Horn 2?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Horn 1 plays when a PUSH call comes in. Horn 2 plays when the push timer hits zero.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How are faction calls detected?</summary><div style="padding:2px 0 4px 12px;opacity:.9">From your Torn message subjects (STAY IN HOSP / PUSH), checked every few seconds with your API key. Optionally also from new chat lines on the war page.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Max points / pink / red numbers?</summary><div style="padding:2px 0 4px 12px;opacity:.9">For termed wars, set the max points. Scores turn pink when near max and bold red at max.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Wide vs side-by-side?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Those checkboxes switch the layout: Wide shows one big table with more columns; side-by-side keeps the two factions next to each other.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Delete stored data &amp; reset?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Wipes everything this script saved, including your API key. Re-enter your key afterwards.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Where is my API key stored?</summary><div style="padding:2px 0 4px 12px;opacity:.9">In your browser only (Tampermonkey storage). It is sent only to api.torn.com. Your sheet link, if you set one, is fetched from Google. Nothing is uploaded with the script.</div></details>' +
+    '<div class="twh-sec">FAQ</div><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What API key do I need?</summary><div style="padding:2px 0 4px 12px;opacity:.9">A Limited Access key from Torn (Settings &gt; API Keys). Paste it at the top and hit Save.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sound?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Click the page once after it loads (browsers block sound until you do). Check the alert toggles and volume here, and use ▶ Test.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sounds when I switch tabs?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Torn\'s rules don\'t allow alerts from a page you\'re not viewing, so alerts only play while the Torn tab is in front. Missed alerts are not replayed when you come back.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Horn 1 vs Horn 2?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Horn 1 plays when a PUSH call comes in. Horn 2 plays when the push timer hits zero.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How are faction calls detected?</summary><div style="padding:2px 0 4px 12px;opacity:.9">From your Torn message subjects (STAY IN HOSP / PUSH), checked every few seconds with your API key. Optionally also from new chat lines on the war page.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Max points / pink / red numbers?</summary><div style="padding:2px 0 4px 12px;opacity:.9">For termed wars, set the max points. Scores turn pink when near max and bold red at max.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Wide vs side-by-side?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Those checkboxes switch the layout: Wide shows one big table with more columns; side-by-side keeps the two factions next to each other.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Delete stored data &amp; reset?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Wipes everything this script saved, including your API key. Re-enter your key afterwards.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Where is my API key stored?</summary><div style="padding:2px 0 4px 12px;opacity:.9">In your browser only (Tampermonkey storage). It is sent only to api.torn.com. Your sheet link, if you set one, is fetched from Google. Nothing is uploaded with the script.</div></details>' +
     '<div class="twh-sec">Tools</div><button id="twh-clrsheet">Clear sheet</button><button id="twh-rstmax">Reset max points</button><button id="twh-wipe" style="background:#a02020;color:#fff;border-color:#c03030">Delete stored data &amp; reset</button>' +
     '<div class="twh-st" id="twh-st"></div>' +
     '<p class="twh-note">Your key stays in your browser (Tampermonkey storage). It is only sent to api.torn.com. The sheet must be shared as "Anyone with the link can view".</p>' +
@@ -1300,6 +1336,10 @@ let pending = false;
 const ours = n => n.nodeType === 1 ? n.closest && n.closest('.twh-tag,.twh-cd,.twh-col,#twh-panel,#twh-call') : n.parentElement && n.parentElement.closest('.twh-tag,.twh-cd,.twh-col,#twh-panel,#twh-call');
 const mo = new MutationObserver(list => { if(pending || list.every(m => ours(m.target))) return; pending = true; requestAnimationFrame(() => { pending = false; paint(); fixAttackLinks(); fixProfileLinks(); }); });
 function start(){
+  document.addEventListener('visibilitychange', syncTabState);
+  window.addEventListener('focus', syncTabState);
+  window.addEventListener('blur', syncTabState);
+  syncTabState();
   try{ ui(); }catch(e){ console.error('[TWH] ui failed', e); }
   mo.observe(document.body, {childList: true, subtree: true});
   setInterval(tick, 1000);

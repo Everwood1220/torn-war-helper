@@ -8,7 +8,7 @@ Made by **Everwood [62912]** of **Aqua**.
 
 - Shows **stats** and a **group tag** (G1 / G2 / G3) next to each enemy, from your target Google Sheet
 - Live **hospital countdown** on enemies in hospital, then a count-up after they leave
-- Optional short **beep** when an enemy you saw in hospital comes out
+- Optional short **beep** when an enemy you saw in hospital comes out (only while the Torn tab is in front)
 - **Wide** or **side-by-side** layout, with extra columns in wide mode (Reason, Last action)
 - Click a column header to **sort** the enemy list (the order stays put until you click again)
 - **Last action** colours: recent / mid / older
@@ -16,6 +16,7 @@ Made by **Everwood [62912]** of **Aqua**.
 - **Faction calls:** STAY IN HOSP and PUSH banners (from your Torn message subjects, and optionally new chat lines on the war page)
 - **Push timer alerts** and a **war horn** when a timed PUSH hits zero
 - **Your own hospital alerts** before you get out
+- Alerts and sounds only play while the Torn tab is in front (Torn's rules do not allow alerts from a page you are not viewing). Missed alerts are not replayed when you come back; a current faction call can still show on the banner, silently
 - **Custom sounds** and volume, plus a built-in FAQ in settings
 - **Clear sheet**, **Reset max points**, and **Delete stored data & reset**
 
@@ -76,6 +77,8 @@ Once the script is on GitHub, Tampermonkey will check that raw link for updates.
 This script is **read-only**. It displays information and plays alerts on the war page. It never auto-clicks, auto-attacks, or performs any game action for you. Attack and profile links only open in a new tab when **you** click them.
 
 API calls are paced (about 700 ms apart) and pause when the tab is hidden. Member data is refreshed about every 30 seconds; message subjects are checked on the interval you set.
+
+Alerts, sounds, and chat-call reading run only while the Torn tab is in front, in line with Torn's rule against using an unfocused page to generate alerts or draw attention. The script does not change the tab title, send desktop notifications, or steal focus. Alerts that come due while you are on another tab are marked as already fired and are not replayed when you return; a current faction call may still appear on the banner, silently.
 
 ## License and credit
 
