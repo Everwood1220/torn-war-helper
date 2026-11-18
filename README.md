@@ -11,8 +11,8 @@ Made by **Everwood [62912]** of **Aqua**.
 - Optional short **beep** when an enemy you saw in hospital comes out (only while the Torn tab is in front)
 - **Wide** or **side-by-side** layout, with extra columns in wide mode (Reason, and Last action between Status and Attack)
 - Click a column header to **sort** the enemy list (the order stays put until you click again)
-- **Last action** colours: recent / mid / older
-- **Termed war maxes:** enemy team max, our team max, and a per-player max for your side. Scores turn pink near the cap and bold red at the cap
+- **Last action** badges: red (online or up to 10 min), yellow (10-15 min), green (over 15 min)
+- **Termed War:** enemy team max, our team max, and a per-player max for your side. Scores turn pink near the cap and bold red at the cap. You can also mark the war as a **termed win** or **termed loss**, and a green TERMED WIN or red TERMED LOSS badge shows between the two faction scores
 - **Faction calls:** STAY IN HOSP and PUSH banners (from your Torn message subjects, and optionally new chat lines on the war page)
 - **Push timer alerts** and a **war horn** when a timed PUSH hits zero
 - **Your own hospital alerts** before you get out
@@ -97,7 +97,7 @@ Before you turn it on, read FF Scouter's [Data Policy / Terms](https://ffscouter
 - **Push timer alerts:** first and final alerts before push time, plus the war horn at zero
 - **My hospital alerts:** first and final alerts before you leave hospital
 - **Custom sounds:** add an audio file up to 1 MB
-- **Termed war max:** enemy team, our team, and our player max (leave blank to turn off)
+- **Termed War:** term outcome (Not set / Termed win / Termed loss), plus enemy team, our team, and our player max (leave a max blank to turn it off)
 - **FAQ** and **Tools** (clear sheet, reset maxes, or wipe everything this script stored)
 
 Click the page once after it loads so the browser allows sound. Use ▶ Test to preview a sound.
