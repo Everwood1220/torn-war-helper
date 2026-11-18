@@ -1,13 +1,9 @@
 // ==UserScript==
 // @name         Torn War Helper
 // @namespace    https://github.com/everwood1220
-// @version      0.2.70
+// @version      0.2.72
 // @description  Ranked war page: adds stats + group from your target sheet and live hospital timers to the enemy list. Optional FF Scouter fair fight estimates.
 // @author       Everwood [62912]
-// @license      MIT
-// @homepageURL  https://github.com/everwood1220/torn-war-helper
-// @updateURL    https://raw.githubusercontent.com/everwood1220/torn-war-helper/main/torn-war-helper.user.js
-// @downloadURL  https://raw.githubusercontent.com/everwood1220/torn-war-helper/main/torn-war-helper.user.js
 // @match        https://www.torn.com/factions.php*
 // @match        https://torn.com/factions.php*
 // @include      https://www.torn.com/factions.php*
@@ -26,7 +22,7 @@
 // ==/UserScript==
 
 (function(){
-const TWH_VERSION = '0.2.70'; // fallback if GM_info is unavailable
+const TWH_VERSION = '0.2.72'; // fallback if GM_info is unavailable
 const twhVer = () => { try { return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || TWH_VERSION; } catch(e){ return TWH_VERSION; } };
 'use strict';
 const API = 'https://api.torn.com/v2';
@@ -384,7 +380,8 @@ body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="attack"]{grid-colum
 body.twh-side.twh-normal [data-twh-row="enemy"]{grid-template-columns:minmax(0,1fr) 40px 0 0 60px 44px var(--twh-stw,72px) 56px !important}
 body.twh-side.twh-normal [data-twh-row="enemy"] > :is([data-twh-cell="stats"],[data-twh-cell="grp"]){visibility:hidden !important;padding:0 !important}
 .twh-c-last{flex-direction:row !important;align-items:center !important}
-.twh-la.red{color:#ff4d4d!important}.twh-la.yellow{color:#f0c040!important}.twh-la.green{color:#5cd65c!important}.twh-la.none{color:#8a929b}
+/* 0.2.72: Last action as a filled pill (like the FF badge) so it reads on dark and light themes */
+.twh-la{display:inline-block;min-width:2.6em;padding:1px 5px;border-radius:3px;text-align:center;font-weight:700 !important;font-variant-numeric:tabular-nums;line-height:1.2 !important;white-space:nowrap;text-shadow:none !important}.twh-la.red{background:#b3261e !important;color:#fff !important}.twh-la.yellow{background:#f0b429 !important;color:#1d1400 !important}.twh-la.green{background:#2e9e44 !important;color:#fff !important}.twh-la.none{background:transparent !important;color:#8a929b !important;font-weight:normal !important}
 body.twh-side [data-twh-row] > [data-twh-cell="reason"]{display:none !important}
 .twh-c-reason{flex-direction:row !important;align-items:center !important}
 .twh-rs{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;max-width:100%;overflow:hidden;white-space:normal;line-height:1.15;font-size:.82em;word-break:break-word}
@@ -431,6 +428,9 @@ body.twh-ffs.twh-side.twh-normal [data-twh-row="enemy"] > [data-twh-cell="stats"
 .twh-tag span.twh-ffe{font-style:italic;opacity:.85}
 .twh-tag span.twh-ff{font-weight:700 !important;font-variant-numeric:tabular-nums} .twh-tag span.twh-ff-g{background:#2e9e44 !important;color:#fff !important} .twh-tag span.twh-ff-y{background:#f0b429 !important;color:#1d1400 !important} .twh-tag span.twh-ff-r{background:#b3261e !important;color:#fff !important} .twh-tag span.twh-ff-n{background:#555 !important;color:#ddd !important} .twh-tag span.twh-ffold{opacity:.6;text-decoration:underline dotted}
 #twh-panel a{color:#9fd3ff} #twh-panel table.twh-tos{border-collapse:collapse;width:100%;font-size:11px;margin:4px 0} #twh-panel table.twh-tos td{border:1px solid #444;padding:2px 4px;vertical-align:top} #twh-panel table.twh-tos td:first-child{font-weight:bold;white-space:nowrap}
+/* 0.2.71: termed war outcome badge */
+.twh-term{display:inline-flex !important;align-items:center;align-self:center;flex:0 0 auto !important;width:auto !important;float:none !important;margin:0 6px;padding:2px 8px;border-radius:4px;font:bold 11px/1.3 Arial,sans-serif;letter-spacing:.5px;white-space:nowrap;color:#fff;box-shadow:0 1px 3px rgba(0,0,0,.4);vertical-align:middle}
+.twh-term[data-term="win"]{background:#2e9e44;border:1px solid #9be7a9} .twh-term[data-term="loss"]{background:#b3261e;border:1px solid #ff8a80}
 #twh-panel label.twh-cap{justify-content:space-between;white-space:nowrap;margin:5px 0} #twh-panel label.twh-cap input{flex:0 0 90px;width:90px !important;text-align:right;padding:4px 6px}
 `;
 function rowOf(a){
@@ -688,7 +688,7 @@ function watchSplit(a, E, O){
   try{ const ro = new ResizeObserver(() => { if(!split || split.a !== a) return ro.disconnect(); const w = a.clientWidth; if(w === split.w) return; split.w = w; setSplitW(E, O, a, split.shrink); requestAnimationFrame(verifySplit); }); split.w = a.clientWidth; ro.observe(a); }catch(e){}
 }
 window.addEventListener('resize', () => { if(split){ setSplitW(split.E, split.O, split.a, split.shrink); requestAnimationFrame(verifySplit); } });
-// the faction name / score blocks (e.g. "EnemyFaction 0 | OurFaction 0"), if they sit in their own side-by-side box
+// the faction name / score blocks ("Catalysis 0 | AQUA-Poseidon 0"), if they sit in their own side-by-side box
 function markFactionHeads(wrap){
   if(!state.enemyName || !state.myName) return;
   const leaf = name => [...document.querySelectorAll('div,span,a,h1,h2,h3,h4,p')].find(el => !wrap.contains(el) && !el.closest('#twh-panel') && el.children.length === 0 && el.textContent.trim() === name);
@@ -858,6 +858,23 @@ function applyCaps(){
     const row = c.parentElement, isHdr = !row.querySelector('a[href*="profiles.php?XID="]');
     capMark(c, isHdr ? null : parseScore(c.textContent), pm);
   });
+  try{ applyTerm(); }catch(e){}
+}
+// 0.2.71: termed war outcome badge (TERMED WIN / TERMED LOSS) between the two faction score boxes
+const termOutcome = () => { const v = get('termOutcome', ''); return v === 'win' || v === 'loss' ? v : ''; };
+function applyTerm(){
+  const v = termOutcome();
+  document.querySelectorAll('.twh-term').forEach(b => { if(!v || !b.closest('.faction-war .faction-names')) b.remove(); });
+  if(!v) return;
+  document.querySelectorAll('.faction-war .faction-names').forEach(fn => {
+    let b = fn.querySelector(':scope > .twh-term');
+    if(!b){ b = document.createElement('span'); b.className = 'twh-term'; }
+    const kids = [...fn.children].filter(k => k !== b);
+    if(kids.length >= 2){ if(b.previousElementSibling !== kids[0] || b.parentElement !== fn) kids[0].after(b); } else if(b.parentElement !== fn) fn.append(b);
+    const t = v === 'win' ? 'TERMED WIN' : 'TERMED LOSS';
+    if(b.textContent !== t) b.textContent = t;
+    if(b.dataset.term !== v){ b.dataset.term = v; b.title = 'Termed war: ' + (v === 'win' ? 'win' : 'loss') + ' (set in \u2699 > Termed War)'; }
+  });
 }
 // re-apply when Torn redraws the name/score boxes
 let capObs = null, capQ = false;
@@ -867,6 +884,7 @@ function watchCaps(){
     if(capQ) return;
     if(!ms.some(m => { const t = m.target.nodeType === 1 ? m.target : m.target.parentElement; return t && (t.closest('.faction-names') || [...m.addedNodes].some(a => a.nodeType === 1 && (a.matches('.faction-names') || a.querySelector('.faction-names')))); })) return;
     if(ms.every(m => [...m.addedNodes, ...m.removedNodes].every(a => a.nodeType === 1 && a.classList.contains('twh-max')) && m.type === 'childList' && (m.addedNodes.length + m.removedNodes.length))) return;
+    if(ms.every(m => { const t = m.target.nodeType === 1 ? m.target : m.target.parentElement; return (t && t.closest('.twh-term')) || (m.type === 'childList' && [...m.addedNodes, ...m.removedNodes].every(a => a.nodeType === 1 && a.classList.contains('twh-term')) && (m.addedNodes.length + m.removedNodes.length)); })) return;   // 0.2.71: our own badge
     capQ = true; requestAnimationFrame(() => { capQ = false; try{ capObs.disconnect(); applyCaps(); }catch(e){} capObs.observe(document.body, {childList: true, subtree: true, characterData: true}); });
   });
   capObs.observe(document.body, {childList: true, subtree: true, characterData: true});
@@ -1328,8 +1346,9 @@ function ui(){
     '<label class="twh-row"><input type="checkbox" id="twh-hosp5on"> First alert at <input type="text" id="twh-hosp5at" maxlength="6" inputmode="numeric" title="Minutes:seconds left (0:10 to 60:00)" style="width:58px;margin:0 4px;padding:3px"> left</label>' + '<div class="twh-arow"><select id="twh-hosp5snd" style="width:auto;max-width:140px;margin:0 6px 0 0;padding:3px">' + sndOpts() + '</select><button data-twhtest="hosp5">▶ Test</button><input type="range" min="0" max="100" id="twh-hosp5vol" style="width:90px;margin:0 0 0 6px;padding:0"></div>' +
     '<label class="twh-row"><input type="checkbox" id="twh-hosp2on"> Final alert at <input type="text" id="twh-hosp2at" maxlength="6" inputmode="numeric" title="Minutes:seconds left (0:10 to 60:00)" style="width:58px;margin:0 4px;padding:3px"> left</label>' + '<div class="twh-arow"><select id="twh-hosp2snd" style="width:auto;max-width:140px;margin:0 6px 0 0;padding:3px">' + sndOpts() + '</select><button data-twhtest="hosp2">▶ Test</button><input type="range" min="0" max="100" id="twh-hosp2vol" style="width:90px;margin:0 0 0 6px;padding:0"></div>' +
     '<div class="twh-sec">Custom sounds</div><div class="twh-arow" style="margin-left:0"><span>Add your own sound</span><input type="file" id="twh-sndfile" accept="audio/*" style="max-width:170px;margin:0 0 0 6px;padding:2px"></div><div id="twh-sndlist"></div><div id="twh-sndmsg" style="font-size:12px;color:#9be7a9"></div>' +
-    '<div class="twh-sec">Termed war max <span class="twh-secsub">(blank = off)</span></div><label class="twh-row twh-cap">Enemy team max <input id="twh-emax" name="twh-emax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our team max <input id="twh-omax" name="twh-omax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our player max <input id="twh-pmax" name="twh-pmax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label>' +
-    '<div class="twh-sec">FAQ</div><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What API key do I need?</summary><div style="padding:2px 0 4px 12px;opacity:.9">A Limited Access key from Torn (Settings &gt; API Keys). Paste it at the top and hit Save.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sound?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Click the page once after it loads (browsers block sound until you do). Check the alert toggles and volume here, and use ▶ Test.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sounds when I switch tabs?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Torn\'s rules don\'t allow alerts from a page you\'re not viewing, so alerts only play while the Torn tab is in front. Missed alerts are not replayed when you come back.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Horn 1 vs Horn 2?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Horn 1 plays when a PUSH call comes in. Horn 2 plays when the push timer hits zero.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How are faction calls detected?</summary><div style="padding:2px 0 4px 12px;opacity:.9">From your Torn message subjects (STAY IN HOSP / PUSH), checked every few seconds with your API key. Optionally also from new chat lines on the war page.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Max points / pink / red numbers?</summary><div style="padding:2px 0 4px 12px;opacity:.9">For termed wars, set the max points. Scores turn pink when near max and bold red at max.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Wide vs side-by-side?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Those checkboxes switch the layout: Wide shows one big table with more columns; side-by-side keeps the two factions next to each other.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Delete stored data &amp; reset?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Wipes everything this script saved, including your API key. Re-enter your key afterwards.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Where is my API key stored?</summary><div style="padding:2px 0 4px 12px;opacity:.9">In your browser only (Tampermonkey storage). It is sent only to api.torn.com, and to ffscouter.com only if you turn on FF Scouter. Your sheet link, if you set one, is fetched from Google. Nothing is uploaded with the script.</div></details>' +
+    '<div class="twh-sec">Termed War <span class="twh-secsub">(blank max = off)</span></div><label class="twh-row twh-cap">Term outcome <select id="twh-term" style="flex:0 0 110px;width:110px;margin:0;padding:3px"><option value="">Not set</option><option value="win">Termed win</option><option value="loss">Termed loss</option></select></label><label class="twh-row twh-cap">Enemy team max <input id="twh-emax" name="twh-emax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our team max <input id="twh-omax" name="twh-omax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our player max <input id="twh-pmax" name="twh-pmax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label>' +
+    '<div class="twh-sec">FAQ</div><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What API key do I need?</summary><div style="padding:2px 0 4px 12px;opacity:.9">A Limited Access key from Torn (Settings &gt; API Keys). Paste it at the top and hit Save.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sound?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Click the page once after it loads (browsers block sound until you do). Check the alert toggles and volume here, and use ▶ Test.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sounds when I switch tabs?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Torn\'s rules don\'t allow alerts from a page you\'re not viewing, so alerts only play while the Torn tab is in front. Missed alerts are not replayed when you come back.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Horn 1 vs Horn 2?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Horn 1 plays when a PUSH call comes in. Horn 2 plays when the push timer hits zero.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How are faction calls detected?</summary><div style="padding:2px 0 4px 12px;opacity:.9">From your Torn message subjects (STAY IN HOSP / PUSH), checked every few seconds with your API key. Optionally also from new chat lines on the war page.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Max points / pink / red numbers?</summary><div style="padding:2px 0 4px 12px;opacity:.9">For termed wars, set the max points. Scores turn pink when near max and bold red at max.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Wide vs side-by-side?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Those checkboxes switch the layout: Wide shows one big table with more columns; side-by-side keeps the two factions next to each other.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Delete stored data &amp; reset?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Wipes everything this script saved, including your API key. Re-enter your key afterwards.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Is the script private?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Yes. It\'s a local Tampermonkey install; your key and settings stay in your browser.</div></details>' +
+    '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Termed win / termed loss badge?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Under Termed War, pick Termed win or Termed loss and a green TERMED WIN or red TERMED LOSS badge shows on the war page, between the two faction scores. Pick Not set to hide it. It is only a reminder for your faction; it does not change any numbers.</div></details>' +
     '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How do I turn on FF Scouter?</summary><div style="padding:2px 0 4px 12px;opacity:.9">1) Register your Torn API key on <a href="https://ffscouter.com/" target="_blank" rel="noopener">ffscouter.com</a> once (or tick the Data Policy box under FF Scouter and press Register key). 2) Tick \u201cShow FF Scouter fair fight\u201d. 3) Press Check key: it should say \u201cKey registered\u201d. No FF Scouter userscript is needed. New sign-ups can take about 5 minutes before estimates show.</div></details>' +
     '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What do the FF numbers and colors mean?</summary><div style="padding:2px 0 4px 12px;opacity:.9">FF is FF Scouter\'s fair fight estimate for you against that player. Green (under 2) = much weaker than you, yellow (2 to 4) = a good fight, red (4+) = likely much stronger than you. Hover for estimated stats, source, build and how old the estimate is. Faded = older than 14 days. A ~ in front of stats means FF Scouter\'s estimate (your sheet has none for that player). Your sheet\'s stats always come first.</div></details>' +
     '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why did the script stop calling the API?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Torn\'s rules say scripts must stop using a key that is wrong, disabled, paused or whose owner is in federal jail (errors 2, 10, 13, 18). The script stops all Torn calls and the \u2699 button gets a red ring. Fix the key on Torn or paste a new one, then press Save. Error 16 (access level too low) stops only that check (e.g. faction calls need Limited Access). Error 5 (too many requests) pauses for a minute. FF Scouter key problems stop FF Scouter only, until you change its settings or press Check key.</div></details>' +
@@ -1343,7 +1362,7 @@ function ui(){
     '<div class="twh-sec">Tools</div><button id="twh-clrsheet">Clear sheet</button><button id="twh-rstmax">Reset max points</button><button id="twh-wipe" style="background:#a02020;color:#fff;border-color:#c03030">Delete stored data &amp; reset</button>' +
     '<div class="twh-st" id="twh-st"></div>' +
     '<p class="twh-note">Your key stays in your browser (Tampermonkey storage). It is only sent to api.torn.com (and to ffscouter.com if you turn on FF Scouter). The sheet must be shared as "Anyone with the link can view".</p>' +
-    '<div style="margin-top:10px"><span id="twh-ver" style="font-size:11px;color:#888">Torn War Helper v' + twhVer() + ' · by Everwood [62912]</span></div>';
+    '<div style="margin-top:10px"><span id="twh-ver" style="font-size:11px;color:#888">Torn War Helper v' + twhVer() + '</span></div>';
   document.body.append(b, p);
   b.onclick = () => { p.style.display = p.style.display === 'none' ? 'block' : 'none'; paintPanel(); };
   // 0.2.6: close on click outside the panel / gear, or Escape
@@ -1399,6 +1418,7 @@ function ui(){
     r.readAsDataURL(f);
   };
   fillSnd();
+  { const ts = p.querySelector('#twh-term'); ts.value = termOutcome(); ts.onchange = () => { set('termOutcome', ts.value); try{ applyCaps(); }catch(e){} }; }   // 0.2.71
   migrateTeamMax(); ['emax:enemyTeamMax', 'omax:ourTeamMax', 'pmax:playerMax'].forEach(x => { const [id, k] = x.split(':'), i = p.querySelector('#twh-' + id);
     i.value = capNum(k) || ''; i.oninput = () => { const n = parseFloat(i.value); set(k, n > 0 ? n : 0); applyCaps(); }; });
   p.querySelector('#twh-beep').onchange = e => { set('beep', e.target.checked); if(e.target.checked) playBeep(); };
@@ -1539,7 +1559,7 @@ document.addEventListener('auxclick', onPlayerOpen, true);
 
 // ---------- start ----------
 let pending = false;
-const ours = n => n.nodeType === 1 ? n.closest && n.closest('.twh-tag,.twh-cd,.twh-col,#twh-panel,#twh-call') : n.parentElement && n.parentElement.closest('.twh-tag,.twh-cd,.twh-col,#twh-panel,#twh-call');
+const ours = n => n.nodeType === 1 ? n.closest && n.closest('.twh-tag,.twh-cd,.twh-col,#twh-panel,#twh-call,.twh-term') : n.parentElement && n.parentElement.closest('.twh-tag,.twh-cd,.twh-col,#twh-panel,#twh-call,.twh-term');
 const mo = new MutationObserver(list => { if(pending || list.every(m => ours(m.target))) return; pending = true; requestAnimationFrame(() => { pending = false; paint(); fixAttackLinks(); fixProfileLinks(); }); });
 function start(){
   document.addEventListener('visibilitychange', syncTabState);
