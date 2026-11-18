@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Torn War Helper
 // @namespace    https://github.com/everwood1220
-// @version      0.2.69
+// @version      0.2.70
 // @description  Ranked war page: adds stats + group from your target sheet and live hospital timers to the enemy list. Optional FF Scouter fair fight estimates.
 // @author       Everwood [62912]
 // @license      MIT
@@ -26,7 +26,7 @@
 // ==/UserScript==
 
 (function(){
-const TWH_VERSION = '0.2.69'; // fallback if GM_info is unavailable
+const TWH_VERSION = '0.2.70'; // fallback if GM_info is unavailable
 const twhVer = () => { try { return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || TWH_VERSION; } catch(e){ return TWH_VERSION; } };
 'use strict';
 const API = 'https://api.torn.com/v2';
@@ -369,16 +369,16 @@ body:not(.twh-side) [data-twh-row="enemy"]{grid-template-columns:minmax(0,3fr) 5
 body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="last"]{grid-column:9 !important}
 body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="attack"]{grid-column:10 !important}
 body.twh-side [data-twh-row] > [data-twh-cell="last"]{display:none !important}
-/* 0.2.27: wide mode - Last moves to column 2, right after Members (status dot) */
-body:not(.twh-side) [data-twh-row="enemy"]{grid-template-columns:minmax(0,3fr) 58px 52px 64px 40px 70px 130px 60px calc(var(--twh-stw,80px) + 24px) 74px !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="last"]{grid-column:2 !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="level"]{grid-column:3 !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="stats"]{grid-column:4 !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="grp"]{grid-column:5 !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="hosp"]{grid-column:6 !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="reason"]{grid-column:7 !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="score"]{grid-column:8 !important}
-body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="status"]{grid-column:9 !important}
+/* 0.2.27: wide mode - Last moved to column 2. 0.2.70: Last now sits between Status and Attack */
+body:not(.twh-side) [data-twh-row="enemy"]{grid-template-columns:minmax(0,3fr) 52px 64px 40px 70px 130px 60px calc(var(--twh-stw,80px) + 24px) 58px 74px !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="level"]{grid-column:2 !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="stats"]{grid-column:3 !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="grp"]{grid-column:4 !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="hosp"]{grid-column:5 !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="reason"]{grid-column:6 !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="score"]{grid-column:7 !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="status"]{grid-column:8 !important}
+body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="last"]{grid-column:9 !important}
 body:not(.twh-side) [data-twh-row="enemy"] > [data-twh-cell="attack"]{grid-column:10 !important}
 /* 0.2.22 normal mode (neither checkbox): Torn's equal 50/50 widths; drop Stats/Grp so names still fit */
 body.twh-side.twh-normal [data-twh-row="enemy"]{grid-template-columns:minmax(0,1fr) 40px 0 0 60px 44px var(--twh-stw,72px) 56px !important}
@@ -423,7 +423,7 @@ body:not(.twh-side) [data-twh-row] > [data-twh-cell="reason"] .twh-rs{text-align
 #twh-panel .twh-note{color:#9aa6b2;font-size:11px;margin:6px 0 0} #twh-panel .twh-st{margin:8px 0 0;font-size:12px}
 #twh-panel label.twh-row{display:flex;align-items:center;gap:6px;margin:4px 0} #twh-panel label.twh-row input{width:auto;margin:0}
 /* 0.2.69: FF Scouter - wider Stats column holds "stats + FF"; normal (50/50) mode shows the FF badge only */
-body.twh-ffs:not(.twh-side) [data-twh-row="enemy"]{grid-template-columns:minmax(0,3fr) 58px 52px 100px 40px 70px 130px 60px calc(var(--twh-stw,80px) + 24px) 74px !important}
+body.twh-ffs:not(.twh-side) [data-twh-row="enemy"]{grid-template-columns:minmax(0,3fr) 52px 100px 40px 70px 130px 60px calc(var(--twh-stw,80px) + 24px) 58px 74px !important}
 body.twh-ffs.twh-side [data-twh-row="enemy"]{grid-template-columns:minmax(0,1fr) 40px 86px 32px 60px 44px var(--twh-stw,72px) 56px !important}
 body.twh-ffs.twh-side.twh-normal [data-twh-row="enemy"]{grid-template-columns:minmax(0,1fr) 40px 40px 0 60px 44px var(--twh-stw,72px) 56px !important}
 body.twh-ffs.twh-side.twh-normal [data-twh-row="enemy"] > [data-twh-cell="stats"]{visibility:visible !important;padding:0 1px !important}
@@ -1167,11 +1167,12 @@ function setCall(c, silent){
   const key = c.kind + ':' + c.sent + ':' + c.text;
   if(call.cur && call.cur.key === key) return;
   if(call.cur && call.cur.sent > c.sent) return;   // older than what is showing
-  c.key = key; c.dismissed = false; c.goFired = false;
+  c.key = key; c.goFired = false;
   if(c.kind === 'push' && c.t) c.at = pushTimeFor(c.sent, c.t);
   if(c.kind === 'push' && !c.at) c.at = c.sent;   // no time = push now
   call.cur = c;
   if(c.kind === 'push' && c.at <= now()) c.goFired = true;
+  c.dismissed = get('callDismissed', '') === key + (c.goFired ? ':go' : '');   // 0.2.70: closed with \u00d7 stays closed (also after reload)
   const stale = !c.sent || c.sent < tabActiveSince;
   if(!silent && call.played !== key && alertsAllowed() && !stale){
     call.played = key; set('callPlayed', key);
@@ -1232,19 +1233,26 @@ const chatMo = new MutationObserver(list => { for(const m of list) m.addedNodes.
 function paintCall(){
   let el = document.getElementById('twh-call');
   const c = call.cur, t = now();
-  if(c && c.kind === 'push' && !c.goFired && c.at <= t){ c.goFired = true; c.dismissed = false; if(call.played !== c.key + ':go'){ call.played = c.key + ':go'; set('callPlayed', call.played); if(alertsAllowed()){ if(callOn('callHornOn')) hornSound(); else callSound('push'); } } }
+  if(c && c.kind === 'push' && !c.goFired && c.at <= t){ c.goFired = true; c.dismissed = get('callDismissed', '') === c.key + ':go'; if(call.played !== c.key + ':go'){ call.played = c.key + ':go'; set('callPlayed', call.played); if(alertsAllowed()){ if(callOn('callHornOn')) hornSound(); else callSound('push'); } } }
   const age = c ? (c.kind === 'push' ? t - c.at : t - c.sent) : 0;
   const show = c && callOn('callBanner') && !c.dismissed && (c.kind === 'stay' ? age <= STAY_SHOW : age <= GO_SHOW);
   if(!show){ if(el) el.style.display = 'none'; return; }
-  if(!el){ el = document.createElement('div'); el.id = 'twh-call'; el.title = 'Drag to move'; document.body.appendChild(el); callDrag(el); }
+  if(!el){ el = document.createElement('div'); el.id = 'twh-call'; el.title = 'Drag to move'; document.body.appendChild(el); callDrag(el);
+    // 0.2.70: \u00d7 closes the banner for this call; a new call shows it again
+    el.addEventListener('click', e => { if(!e.target.closest || !e.target.closest('.twh-cclose')) return; e.preventDefault(); e.stopPropagation(); closeCall(); }); }
   let cls, big, sub;
   const when = new Date(c.sent * 1000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
   if(c.kind === 'stay'){ cls = 'stay'; big = 'STAY IN HOSP'; sub = 'since ' + when + ' (' + hhmm(c.sent) + ' TCT)'; }
   else if(c.at > t){ cls = 'soon'; big = 'PUSH @ ' + hhmm(c.at) + ' TCT'; sub = 'in ' + fmtLeft(c.at - t); }
   else { cls = 'go'; big = 'PUSH NOW'; sub = 'started ' + fmtLeft(t - c.at) + ' ago'; }
-  const html = '<div class="twh-cbig">' + big + '</div>' + (c.from ? '<div class="twh-cfrom">from ' + escH(c.from) + '</div>' : '') + '<div class="twh-csub">' + sub + ' \u00b7 \u201c' + escH(c.text.slice(0, 80)) + '\u201d</div><div class="twh-cx" title="Drag to move">\u283f</div>';
+  const html = '<div class="twh-cbig">' + big + '</div>' + (c.from ? '<div class="twh-cfrom">from ' + escH(c.from) + '</div>' : '') + '<div class="twh-csub">' + sub + ' \u00b7 \u201c' + escH(c.text.slice(0, 80)) + '\u201d</div><div class="twh-cx" title="Drag to move">\u283f</div><button type="button" class="twh-cclose" title="Close this call banner" aria-label="Close">\u00d7</button>';
   if(el.dataset.html !== html){ el.innerHTML = html; el.dataset.html = html; }
   el.className = cls; el.style.display = 'block'; callPlace(el);
+}
+function closeCall(){
+  const c = call.cur; if(!c) return;
+  c.dismissed = true; set('callDismissed', c.key + (c.kind === 'push' && c.goFired ? ':go' : ''));
+  const el = document.getElementById('twh-call'); if(el) el.style.display = 'none';
 }
 // 0.2.41: draggable banner, position saved
 function callPlace(el){
@@ -1258,7 +1266,7 @@ function callDrag(el){
   let d = null;
   const pt = e => e.touches ? e.touches[0] : e;
   const start = e => {
-    if(e.button > 0 || (e.target.closest && e.target.closest('a'))) return;
+    if(e.button > 0 || (e.target.closest && e.target.closest('a,.twh-cclose'))) return;   // 0.2.70: \u00d7 never starts a drag
     const r = el.getBoundingClientRect(), p = pt(e);
     d = {dx: p.clientX - r.left, dy: p.clientY - r.top};
     el.classList.add('twh-drag', 'twh-moved'); el.style.left = r.left + 'px'; el.style.top = r.top + 'px';
@@ -1281,6 +1289,7 @@ const CALL_CSS = '#twh-call{position:fixed;top:8px;left:50%;transform:translateX
   '#twh-call.stay{background:#b3261e;border:2px solid #ff8a80}#twh-call.soon{background:#f0b429;color:#1d1400;border:2px solid #b37f00}#twh-call.go{background:#2e9e44;border:2px solid #9be7a9;animation:twhPulse 1s ease-in-out 6}' +
   '#twh-call .twh-cbig{font:bold 26px/1.15 Arial,sans-serif;letter-spacing:1px}#twh-call .twh-cfrom{font:bold 16px/1.2 Arial,sans-serif;margin-top:2px}#twh-call .twh-csub{font-size:13px;margin-top:3px;opacity:.95;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}#twh-call .twh-cx{position:absolute;top:6px;right:10px;font-size:16px;opacity:.8}' +
   '#twh-call.twh-moved{transform:none}#twh-call.twh-drag{cursor:grabbing;opacity:.9}#twh-call.twh-moved.go{animation:none}#twh-call .twh-cx{cursor:grab}' +
+  '#twh-call{padding-right:56px}#twh-call .twh-cx{right:32px}#twh-call .twh-cclose{position:absolute;top:4px;right:6px;width:22px;height:22px;margin:0;padding:0;border:0;border-radius:50%;background:rgba(0,0,0,.25);color:inherit;font:bold 16px/22px Arial,sans-serif;text-align:center;cursor:pointer}#twh-call .twh-cclose:hover{background:rgba(0,0,0,.5)}' +
   '@keyframes twhPulse{50%{transform:translateX(-50%) scale(1.04)}}';
 // test hook for mock pages: window.twhTestCall('STAY IN HOSP')
 window.twhTestCall = (text, from) => { const c = classifyCall(text, true); if(c) setCall({kind: c.kind, t: c.t, text, from: from || 'test', sent: Math.floor(now()), src: 'test'}, false); return c; };

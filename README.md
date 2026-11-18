@@ -9,7 +9,7 @@ Made by **Everwood [62912]** of **Aqua**.
 - Shows **stats** and a **group tag** (G1 / G2 / G3) next to each enemy, from your target Google Sheet
 - Live **hospital countdown** on enemies in hospital, then a count-up after they leave
 - Optional short **beep** when an enemy you saw in hospital comes out (only while the Torn tab is in front)
-- **Wide** or **side-by-side** layout, with extra columns in wide mode (Reason, Last action)
+- **Wide** or **side-by-side** layout, with extra columns in wide mode (Reason, and Last action between Status and Attack)
 - Click a column header to **sort** the enemy list (the order stays put until you click again)
 - **Last action** colours: recent / mid / older
 - **Termed war maxes:** enemy team max, our team max, and a per-player max for your side. Scores turn pink near the cap and bold red at the cap
@@ -110,7 +110,7 @@ The script reads the **subjects** of your newest Torn messages (it does not open
 - "Push at 18:30" (TCT) → amber countdown, then green **PUSH NOW** and the war horn at that time
 - A chat line like **PUSH** means push now
 
-The banner can be dragged; its position is remembered. It clears on its own after a few minutes, or when the other call comes in.
+The banner can be dragged; its position is remembered. Click the small **×** in its corner to close it; a new call brings it back. It clears on its own after a few minutes, or when the other call comes in.
 
 ## Updates
 
