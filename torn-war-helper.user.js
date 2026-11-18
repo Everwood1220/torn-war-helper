@@ -1,8 +1,8 @@
 // ==UserScript==
 // @name         Torn War Helper
 // @namespace    https://github.com/everwood1220
-// @version      0.2.68
-// @description  Ranked war page: adds stats + group from your target sheet and live hospital timers to the enemy list.
+// @version      0.2.69
+// @description  Ranked war page: adds stats + group from your target sheet and live hospital timers to the enemy list. Optional FF Scouter fair fight estimates.
 // @author       Everwood [62912]
 // @license      MIT
 // @homepageURL  https://github.com/everwood1220/torn-war-helper
@@ -21,11 +21,12 @@
 // @connect      api.torn.com
 // @connect      docs.google.com
 // @connect      googleusercontent.com
+// @connect      ffscouter.com
 // @run-at       document-idle
 // ==/UserScript==
 
 (function(){
-const TWH_VERSION = '0.2.68'; // fallback if GM_info is unavailable
+const TWH_VERSION = '0.2.69'; // fallback if GM_info is unavailable
 const twhVer = () => { try { return (typeof GM_info !== 'undefined' && GM_info.script && GM_info.script.version) || TWH_VERSION; } catch(e){ return TWH_VERSION; } };
 'use strict';
 const API = 'https://api.torn.com/v2';
@@ -135,26 +136,43 @@ async function syncSheet(manual){
 
 // ---------- Torn API: one paced queue ----------
 const queue = []; let busy = false, lastCall = 0;
-function enqueue(name, fn){ if(queue.some(q => q.name === name)) return; queue.push({name, fn}); pump(); }
+function enqueue(name, fn){ if(keyBad || deniedJobs.has(name) || queue.some(q => q.name === name)) return; queue.push({name, fn}); pump(); }
 // 0.2.7: put a job at the front (moves it up if it's already waiting; skipped if the same job is running)
 let running = '';
-function enqueueFirst(name, fn){ if(running === name) return; const i = queue.findIndex(q => q.name === name); const job = i >= 0 ? queue.splice(i, 1)[0] : {name, fn}; queue.unshift(job); pump(); }
+function enqueueFirst(name, fn){ if(keyBad || deniedJobs.has(name) || running === name) return; const i = queue.findIndex(q => q.name === name); const job = i >= 0 ? queue.splice(i, 1)[0] : {name, fn}; queue.unshift(job); pump(); }
 async function pump(){
   if(busy) return; busy = true;
   try{
     while(queue.length){
-      const wait = SPACING - (Date.now() - lastCall); if(wait > 0) await new Promise(r => setTimeout(r, wait));
+      const wait = Math.max(SPACING - (Date.now() - lastCall), apiHold - Date.now()); if(wait > 0) await new Promise(r => setTimeout(r, wait));   // 0.2.69: also waits out a code 5 back-off
+      if(keyBad){ queue.length = 0; break; }   // 0.2.69: never call Torn with a dead key
       const ci = queue.findIndex(q => q.name === 'calls');   // 0.2.43: faction-call check always goes next
       const job = ci > 0 ? queue.splice(ci, 1)[0] : queue.shift(); lastCall = Date.now(); running = job.name;
       try{ await job.fn(); }catch(e){ state.note = e.message; paintPanel(); } finally { running = ''; }
     }
   } finally { busy = false; }
 }
+// 0.2.69: Torn's API rules - stop calling with an invalid / disabled / paused key, back off on "too many requests"
+const KEY_DEAD = {2: 'Incorrect key', 10: 'Key owner is in federal jail', 13: 'Key disabled because the owner has been inactive', 18: 'Key is paused by its owner'};
+let keyBad = get('keyBad', null);       // {code, msg, at}: kept until the key is saved again in settings
+let apiHold = 0, apiHoldWhy = '';       // ms timestamp: no Torn calls before this (codes 5, 8, 9, 14)
+const deniedJobs = new Set();           // jobs that got code 16 (key access level too low), skipped until the key is saved again
+const keyOk = () => !!apiKey && !keyBad;
+const keyBadText = () => keyBad ? 'Torn API stopped - error ' + keyBad.code + ': ' + (KEY_DEAD[keyBad.code] || keyBad.msg || 'key error') + '. Fix the key on Torn (or paste a new one) and press Save to resume.' : '';
 async function api(path){
   if(!apiKey) throw new Error('Set your API key in ⚙');
+  if(keyBad) throw new Error(keyBadText());
   const r = await xhr(API + path + (path.includes('?') ? '&' : '?') + 'comment=WarHelper&key=' + encodeURIComponent(apiKey));
   let j; try{ j = JSON.parse(r.responseText); }catch(e){ throw new Error('Bad response from Torn'); }
-  if(j && j.error) throw new Error('Torn API error ' + j.error.code + ': ' + j.error.error);
+  if(j && j.error){
+    const code = +j.error.code, msg = String(j.error.error || '');
+    if(KEY_DEAD[code]){ keyBad = {code, msg, at: Date.now()}; set('keyBad', keyBad); queue.length = 0; }
+    else if(code === 16){ if(running) deniedJobs.add(running); }
+    else if(code === 5){ apiHold = Date.now() + 60000; apiHoldWhy = 'Too many requests (error 5) - pausing Torn calls for 60 s'; }
+    else if(code === 8 || code === 9){ apiHold = Date.now() + 300000; apiHoldWhy = 'Torn API unavailable (error ' + code + ') - pausing Torn calls for 5 min'; }
+    else if(code === 14){ apiHold = Date.now() + 600000; apiHoldWhy = 'Daily read limit reached (error 14) - pausing Torn calls for 10 min'; }
+    const e = new Error('Torn API error ' + code + ': ' + msg); e.code = code; throw e;
+  }
   return j;
 }
 async function loadMe(){
@@ -182,13 +200,125 @@ async function loadMembers(){
 }
 function onWarPage(){ return /factions\.php/.test(location.href) && /war/i.test(location.hash + location.search); }
 function schedule(){
-  if(!apiKey || document.hidden || !onWarPage()) return;
+  if(!keyOk() || document.hidden || !onWarPage()) return;
   if(!state.myFaction){ enqueue('me', loadMe); }
   if(Date.now() - state.warsAt > WARS_EVERY) enqueue('wars', loadWar);
   if(Date.now() - state.membersAt > MEMBERS_EVERY) enqueue('members', loadMembers);
   if(sheetUrl && !get('sheetCleared', false) && (!sheet || sheet.url !== sheetUrl || Date.now() - sheet.ts > SHEET_EVERY)){ if(!syncing){ syncing = true; syncSheet().finally(() => { syncing = false; }); } }
 }
 let syncing = false;
+
+// ---------- 0.2.69: FF Scouter (optional, off by default) ----------
+// ffscouter.com is a separate community service (built against its OpenAPI spec 1.22.0). Nothing is sent there unless you turn it on.
+// When on, the FF Scouter key (your Torn key unless you enter another) and the enemy player IDs go to ffscouter.com/api/v1.
+// Batched (up to 100 IDs per call), cached 1 hour per player (FF Scouter's guidance), fetched only while this tab is in front.
+const FFS_API = 'https://ffscouter.com/api/v1', FFS_SITE = 'https://ffscouter.com/', FFS_PRIVACY = 'https://ffscouter.com/privacy', FFS_PREMIUM = 'https://ffscouter.com/premium';
+const FFS_TTL = 3600e3, FFS_KEEP = 24 * 3600e3, FFS_BATCH = 100, FFS_GAP = 15000, FFS_OLD = 14 * 86400;
+const FFS_KEYERR = {1: 'No key was sent', 2: 'Key format is wrong (16 letters/numbers)', 6: 'This key is not registered with FF Scouter', 4010: 'Your account is banned from FF Scouter', 4011: 'Your faction is banned from FF Scouter'};
+const ffsOn = () => !!get('ffsOn', false);
+const ffsKey = () => String(get('ffsKey', '') || apiKey || '').trim();
+const ffsTag = k => k ? k.length + ':' + k.slice(-4) : '';      // which key a status belongs to (not the key itself)
+let ffsCache = get('ffsCache', null) || {};    // {id: {at, ff, bs, bsh, bss, upd, src, dist, spy, alt}}
+let ffsSt = get('ffsStatus', null) || {};      // {k, checked, registered, premium, premExp, policyUpdate, blocked: {code, msg, k}}
+let ffsBusy = false, ffsNext = 0, ffsFails = 0, ffsNote = '';
+const ffsBlocked = () => !!(ffsSt.blocked && ffsSt.blocked.k === ffsTag(ffsKey()));
+const ffsSave = () => set('ffsStatus', ffsSt);
+function ffsReset(){ delete ffsSt.blocked; ffsSt.checked = 0; ffsSave(); ffsNext = 0; ffsFails = 0; ffsNote = ''; }
+function ffsXhr(method, url, body){
+  return new Promise((resolve, reject) => GM_xmlhttpRequest({method, url, timeout: 20000, headers: body ? {'Content-Type': 'application/json', 'Accept': 'application/json'} : {'Accept': 'application/json'},
+    data: body ? JSON.stringify(body) : undefined, onload: r => resolve(r), onerror: () => reject(new Error('Network error')), ontimeout: () => reject(new Error('Timed out'))}));
+}
+async function ffsReq(path, body){
+  const r = await ffsXhr(body ? 'POST' : 'GET', FFS_API + path, body);
+  let j = null; try{ j = JSON.parse(r.responseText); }catch(e){}
+  if(r.status === 200 && j) return j;
+  const e = new Error((j && j.error) || ('FF Scouter returned HTTP ' + r.status)); e.code = j && +j.code || 0; e.status = r.status; e.retry = j && +j.retry_after_seconds || 0; e.j = j; throw e;
+}
+function ffsFail(e, key){
+  const keyErr = FFS_KEYERR[e.code] && ((e.status === 400 && e.code <= 2) || e.status === 401 || e.status === 403);
+  if(keyErr){ ffsSt.blocked = {code: e.code, msg: FFS_KEYERR[e.code], k: ffsTag(key)}; ffsSave(); ffsNote = ''; return; }   // stop until settings change
+  if(e.status === 429){ ffsNext = Date.now() + Math.max(30, e.retry || 60) * 1000; ffsNote = 'FF Scouter rate limit - waiting ' + Math.round((ffsNext - Date.now()) / 1000) + ' s'; return; }
+  ffsFails++; const wait = Math.min(30 * 60e3, 60e3 * Math.pow(2, ffsFails - 1));   // network / server trouble: 1, 2, 4 ... 30 min
+  ffsNext = Date.now() + wait; ffsNote = 'FF Scouter: ' + e.message + ' - retrying in ' + Math.round(wait / 60e3) + ' min';
+}
+async function ffsCheck(){
+  const key = ffsKey();
+  if(!/^[A-Za-z0-9]{16}$/.test(key)){ ffsSt.blocked = {code: 2, msg: key ? FFS_KEYERR[2] : 'No key - set your Torn API key first', k: ffsTag(key)}; ffsSave(); return; }
+  try{
+    const j = await ffsReq('/check-key?key=' + encodeURIComponent(key));
+    Object.assign(ffsSt, {k: ffsTag(key), checked: Date.now(), registered: !!j.is_registered, premium: !!j.is_premium, premExp: +j.premium_expires_at || +j.faction_premium_expires_at || 0, policyUpdate: !!j.policy_update_required});
+    if(j.is_registered) delete ffsSt.blocked; else ffsSt.blocked = {code: 6, msg: FFS_KEYERR[6], k: ffsTag(key)};
+    ffsSave(); ffsFails = 0; ffsNote = '';
+  }catch(e){ ffsFail(e, key); }
+}
+async function ffsRegister(){
+  const key = ffsKey();
+  if(!/^[A-Za-z0-9]{16}$/.test(key)){ ffsNote = 'Set a 16-character key first.'; return; }
+  try{ await ffsReq('/register', {key, agree_to_data_policy: true, signup_source: 'TornWarHelper'}); ffsNote = 'Registered. FF Scouter can take up to 5 minutes before estimates show.'; }
+  catch(e){ if(e.code === 8 && e.status === 409) ffsNote = 'Already registered.';
+    else { ffsNote = 'Register failed: ' + e.message + (e.j && e.j.torn_code ? ' (Torn error ' + e.j.torn_code + ')' : ''); return; } }
+  delete ffsSt.blocked; ffsSt.checked = 0; ffsSave(); await ffsCheck();
+}
+const ffsNum = v => v == null || v === '' || !isFinite(+v) ? null : +v;
+function ffsSlim(x, t){
+  const o = {at: t, ff: ffsNum(x.fair_fight), bs: ffsNum(x.bs_estimate), bsh: x.bs_estimate_human || '', bss: ffsNum(x.bss_public), upd: +x.last_updated || 0, src: x.source || ''};
+  if(x.distribution && x.distribution.distribution_human) o.dist = String(x.distribution.distribution_human);
+  const sp = Array.isArray(x.spies) && x.spies.length ? x.spies.slice().sort((a, b) => (+b.last_updated || 0) - (+a.last_updated || 0))[0] : null;
+  if(sp && sp.total != null) o.spy = {total: +sp.total, upd: +sp.last_updated || 0, src: sp.source || ''};
+  const av = x.available_estimates || {}, alt = [];
+  ['bss', 'premium', 'spies'].forEach(n => { const a = av[n]; if(a && (a.bs_estimate != null || a.fair_fight != null)) alt.push([n, a.bs_estimate_human || fmtStats(+a.bs_estimate), ffsNum(a.fair_fight), +a.last_updated || 0]); });
+  if(alt.length > 1) o.alt = alt;
+  return o;
+}
+function ffsPrune(){ const t = Date.now(); Object.keys(ffsCache).forEach(id => { if(!ffsCache[id] || t - ffsCache[id].at > FFS_KEEP) delete ffsCache[id]; }); }
+const ffsWanted = () => { const t = Date.now(); return Object.keys(state.members).filter(id => { const c = ffsCache[id]; return !c || t - c.at > FFS_TTL; }); };
+async function ffsLoad(ids, key){
+  try{
+    const j = await ffsReq('/get-stats?key=' + encodeURIComponent(key) + '&targets=' + ids.join(','));
+    const t = Date.now(), got = new Set();
+    (Array.isArray(j) ? j : []).forEach(x => { if(!x || !x.player_id) return; got.add(String(x.player_id)); ffsCache[x.player_id] = ffsSlim(x, t); });
+    ids.forEach(id => { if(!got.has(String(id))) ffsCache[id] = {at: t, ff: null, bs: null}; });   // no answer for this ID: don't ask again for an hour
+    ffsPrune(); set('ffsCache', ffsCache);
+    ffsFails = 0; ffsNote = ''; ffsNext = Date.now() + FFS_GAP;
+    try{ paint(); }catch(e){}
+  }catch(e){ ffsFail(e, key); }
+}
+function ffsSchedule(){
+  if(!ffsOn() || ffsBusy || Date.now() < ffsNext || !tabActive() || !onWarPage() || ffsBlocked()) return;
+  const key = ffsKey(); if(!key) return;
+  const run = p => { ffsBusy = true; p.finally(() => { ffsBusy = false; try{ paintPanel(); }catch(e){} }); };
+  if(!ffsSt.checked || ffsSt.k !== ffsTag(key) || Date.now() - ffsSt.checked > 24 * 3600e3){ ffsNext = Date.now() + 3000; return run(ffsCheck()); }   // check-key once a day
+  const ids = ffsWanted(); if(!ids.length) return;
+  run(ffsLoad(ids.slice(0, FFS_BATCH), key));
+}
+// display
+const ffsCls = ff => ff == null ? 'n' : ff < 2 ? 'g' : ff < 4 ? 'y' : 'r';     // low FF green (easy), high red (much stronger than you)
+const ffsFmt = ff => ff == null ? '?' : ff >= 10 ? ff.toFixed(1) : ff.toFixed(2);
+const ffsAgo = ts => ts ? compactAgo(ts) + ' ago' : 'unknown';
+const ffsSrc = s => ({bss: 'battle stat score', premium: 'FF Scouter premium', spies: 'spy', spy: 'spy'}[s] || s || '?');
+function ffsTip(f){
+  const L = [];
+  if(f.ff == null && f.bs == null){ L.push('FF Scouter: no estimate for this player yet'); return L; }
+  L.push('FF Scouter: fair fight ' + ffsFmt(f.ff) + (f.bs != null ? ', est. stats ' + (f.bsh || fmtStats(f.bs)) : ''));
+  L.push('Source: ' + ffsSrc(f.src) + ', estimate updated ' + ffsAgo(f.upd) + (f.upd && now() - f.upd > FFS_OLD ? ' (old)' : ''));
+  if(f.dist) L.push('Build: ' + f.dist);
+  if(f.spy) L.push('Spy: ' + fmtStats(f.spy.total) + ' total (' + (f.spy.src || 'spy') + ', ' + ffsAgo(f.spy.upd) + ')');
+  if(f.alt) L.push('All estimates: ' + f.alt.map(a => ffsSrc(a[0]) + ' ' + a[1] + (a[2] != null ? ' (FF ' + ffsFmt(a[2]) + ')' : '')).join(', '));
+  if(f.bss != null) L.push('Battle stat score: ' + f.bss.toLocaleString());
+  L.push('Fetched ' + compactAgo(Math.floor(f.at / 1000)) + ' ago from ffscouter.com');
+  return L;
+}
+// stats cell: sheet stats stay first; FF Scouter's estimate (~) fills in when the sheet has none; FF badge after
+function statsCellHtml(id, p){
+  const f = ffsOn() ? ffsCache[id] : null, tip = [];
+  if(p && p.stats != null) tip.push('Battle stats from your target sheet: ' + fmtStats(p.stats));
+  if(f) tip.push(...ffsTip(f));
+  const t = escH(tip.join('\n')).replace(/\n/g, '&#10;');
+  let h = p && p.stats != null ? '<span class="twh-sv" title="' + t + '">' + fmtStats(p.stats) + '</span>'
+    : f && f.bs != null ? '<span class="twh-sv twh-ffe" title="' + t + '">~' + fmtStats(f.bs) + '</span>' : '';
+  if(f) h += '<span class="twh-ff twh-ff-' + ffsCls(f.ff) + (f.upd && now() - f.upd > FFS_OLD ? ' twh-ffold' : '') + '" title="' + t + '">' + ffsFmt(f.ff) + '</span>';
+  return h;
+}
 
 // ---------- page: find enemy rows by profile links, inject once, update in place ----------
 const CSS = `
@@ -292,6 +422,15 @@ body:not(.twh-side) [data-twh-row] > [data-twh-cell="reason"] .twh-rs{text-align
 #twh-panel button{margin:2px 6px 2px 0;padding:4px 9px;background:#2b3442;color:#fff;border:1px solid #666;border-radius:5px;cursor:pointer}
 #twh-panel .twh-note{color:#9aa6b2;font-size:11px;margin:6px 0 0} #twh-panel .twh-st{margin:8px 0 0;font-size:12px}
 #twh-panel label.twh-row{display:flex;align-items:center;gap:6px;margin:4px 0} #twh-panel label.twh-row input{width:auto;margin:0}
+/* 0.2.69: FF Scouter - wider Stats column holds "stats + FF"; normal (50/50) mode shows the FF badge only */
+body.twh-ffs:not(.twh-side) [data-twh-row="enemy"]{grid-template-columns:minmax(0,3fr) 58px 52px 100px 40px 70px 130px 60px calc(var(--twh-stw,80px) + 24px) 74px !important}
+body.twh-ffs.twh-side [data-twh-row="enemy"]{grid-template-columns:minmax(0,1fr) 40px 86px 32px 60px 44px var(--twh-stw,72px) 56px !important}
+body.twh-ffs.twh-side.twh-normal [data-twh-row="enemy"]{grid-template-columns:minmax(0,1fr) 40px 40px 0 60px 44px var(--twh-stw,72px) 56px !important}
+body.twh-ffs.twh-side.twh-normal [data-twh-row="enemy"] > [data-twh-cell="stats"]{visibility:visible !important;padding:0 1px !important}
+body.twh-ffs.twh-side.twh-normal [data-twh-row="enemy"] > [data-twh-cell="stats"] .twh-sv{display:none !important}
+.twh-tag span.twh-ffe{font-style:italic;opacity:.85}
+.twh-tag span.twh-ff{font-weight:700 !important;font-variant-numeric:tabular-nums} .twh-tag span.twh-ff-g{background:#2e9e44 !important;color:#fff !important} .twh-tag span.twh-ff-y{background:#f0b429 !important;color:#1d1400 !important} .twh-tag span.twh-ff-r{background:#b3261e !important;color:#fff !important} .twh-tag span.twh-ff-n{background:#555 !important;color:#ddd !important} .twh-tag span.twh-ffold{opacity:.6;text-decoration:underline dotted}
+#twh-panel a{color:#9fd3ff} #twh-panel table.twh-tos{border-collapse:collapse;width:100%;font-size:11px;margin:4px 0} #twh-panel table.twh-tos td{border:1px solid #444;padding:2px 4px;vertical-align:top} #twh-panel table.twh-tos td:first-child{font-weight:bold;white-space:nowrap}
 #twh-panel label.twh-cap{justify-content:space-between;white-space:nowrap;margin:5px 0} #twh-panel label.twh-cap input{flex:0 0 90px;width:90px !important;text-align:right;padding:4px 6px}
 `;
 function rowOf(a){
@@ -616,7 +755,10 @@ function placeWide(row, a, statsHtml, grpHtml, level){
   if(c.stats.dataset.h !== statsHtml){ c.stats.innerHTML = statsHtml ? '<span class="twh-tag">' + statsHtml + '</span>' : ''; c.stats.dataset.h = statsHtml; }
   if(c.grp.dataset.h !== grpHtml){ c.grp.innerHTML = grpHtml ? '<span class="twh-tag">' + grpHtml + '</span>' : ''; c.grp.dataset.h = grpHtml; }
   const hd = headerFor(row);
-  if(hd && hd.kids[lvlIdx] && hd.kids[nameIdx]){ markCells(hd.h, hd.kids, nameIdx, lvlIdx, 'enemy'); ensureCells(hd.h, hd.kids[lvlIdx], true); }
+  if(hd && hd.kids[lvlIdx] && hd.kids[nameIdx]){ markCells(hd.h, hd.kids, nameIdx, lvlIdx, 'enemy'); const hc = ensureCells(hd.h, hd.kids[lvlIdx], true);
+    // 0.2.69: header says what the Stats column holds
+    const lab = !ffsOn() ? 'Stats' : !wide() && !narrowOn() ? 'FF' : 'Stats FF';
+    if(hc.stats.textContent !== lab){ hc.stats.textContent = lab; hc.stats.title = ffsOn() ? 'Stats from your target sheet (~ = FF Scouter estimate when the sheet has none) and FF Scouter fair fight' : 'Torn War Helper'; } }
   return cs.box;
 }
 // our list: full width, original columns, proportional widths
@@ -750,7 +892,7 @@ function paint(){
     row.dataset.twhId = id;
     // stats + group tag in their own column, right after the Level cell
     const p = players[id];
-    const sh = p && p.stats != null ? '<span title="Battle stats from your target sheet">' + fmtStats(p.stats) + '</span>' : '';
+    const sh = statsCellHtml(id, p);   // 0.2.69: sheet stats + optional FF Scouter estimate / fair fight
     const gh = p && p.group ? '<span class="twh-g ' + p.group.toLowerCase() + '" title="Group ' + p.group.slice(1) + ' (from your target sheet)">' + p.group.slice(1) + '</span>' : '';
     // 0.2.11: both modes use the shared row grid (own Hosp column); containers are only restyled in wide mode
     placeWide(row, a, sh, gh, mem[id].level); if(!blocks) blocks = markBlocks(row);
@@ -779,6 +921,7 @@ function paint(){
         if(l) sp.title = (l.st ? l.st + ' - ' : '') + (l.rel || compactAgo(l.ts) + ' ago'); lc2.append(sp); } }
   });
   document.body.classList.toggle('twh-side', !isWide);
+  document.body.classList.toggle('twh-ffs', ffsOn());
   document.body.classList.toggle('twh-normal', !isWide && !narrowOn());
   markOurs(blocks);
   if(!isWide) try{ trySplit(blocks); }catch(e){ console.error('[TWH] split failed', e); }
@@ -830,7 +973,8 @@ function sortVal(row, key){
   const id = +row.dataset.twhId, m = state.members[id] || {}, p = ((sheet && sheet.players) || {})[id] || {};
   if(key === 'name') return (m.name || T(row)).toLowerCase();
   if(key === 'level') return +m.level || 0;
-  if(key === 'stats') return p.stats != null && p.stats !== '' ? parseStatNumber(String(p.stats)) || +p.stats || null : null;
+  if(key === 'stats'){ const v = p.stats != null && p.stats !== '' ? parseStatNumber(String(p.stats)) || +p.stats || null : null;
+    if(v != null || !ffsOn()) return v; const f = ffsCache[id]; return f ? (f.bs != null ? f.bs : f.ff != null ? f.ff : null) : null; }   // 0.2.69: FF Scouter estimate fills in
   if(key === 'grp') return p.group ? +String(p.group).replace(/\D/g, '') || null : null;
   if(key === 'hosp') return m.state === 'Hospital' && m.until ? Math.max(0, m.until - now()) : 0;
   if(key === 'last'){ const l = lastFor(id, m); return l ? l.ts : null; }
@@ -1013,7 +1157,7 @@ async function loadMyStatus(){
   me.next = Date.now() + (left > 0 && left < Math.max(alertAt('hosp5'), alertAt('hosp2')) + 90 ? 10000 : 30000);
 }
 function scheduleMe(){
-  if(!apiKey || document.hidden || !(aGet('hosp5', 'on') || aGet('hosp2', 'on'))) return;
+  if(!keyOk() || document.hidden || !(aGet('hosp5', 'on') || aGet('hosp2', 'on'))) return;
   if(Date.now() >= me.next && running !== 'mestat' && !queue.some(q => q.name === 'mestat')){ me.next = Date.now() + 30000; enqueue('mestat', loadMyStatus); }
 }
 window.twhTestHosp = secs => { me.state = 'Hospital'; me.until = now() + secs; };   // test hook
@@ -1063,10 +1207,10 @@ async function loadCallMsgs(){
     const j = await api('/user/messages?limit=50&sort=DESC&timestamp=' + Math.floor(Date.now() / 1000))   // 0.2.43: timestamp skips Torn's response cache;
     const msgs = Array.isArray(j.messages) ? j.messages : Object.values(j.messages || {});
     callFromMessages(msgs, callFirst); callFirst = false; call.note = '';
-  }catch(e){ call.note = /code 16/.test(e.message) ? 'Calls need a Limited Access key' : e.message; }
+  }catch(e){ call.note = e.code === 16 ? 'Faction calls need a Limited Access key' : e.message; }
 }
 function scheduleCalls(){
-  if(!apiKey || document.hidden || !(callOn('callStayOn') || callOn('callPushOn') || callOn('callBanner'))) return;
+  if(!keyOk() || document.hidden || !(callOn('callStayOn') || callOn('callPushOn') || callOn('callBanner'))) return;
   if(Date.now() >= call.msgNext && running !== 'calls' && !queue.some(q => q.name === 'calls')) enqueueFirst('calls', loadCallMsgs);
 }
 // chat: Torn's chat lives in #chatRoot (class names change); read text of message nodes added after load
@@ -1153,6 +1297,14 @@ function ui(){
     '<div class="twh-sec">Display</div><label class="twh-row"><input type="checkbox" id="twh-wide"> Wide layout (enemy on top)</label>' +
     '<label class="twh-row"><input type="checkbox" id="twh-narrow"> Narrow my team (side-by-side mode)</label>' +
     '<label class="twh-row"><input type="checkbox" id="twh-beep"> Beep when out of hospital</label>' +
+    // 0.2.69: FF Scouter (opt-in)
+    '<div class="twh-sec">FF Scouter <span class="twh-secsub">(optional, off by default)</span></div>' +
+    '<label class="twh-row"><input type="checkbox" id="twh-ffson"> Show FF Scouter fair fight + estimated stats</label>' +
+    '<div class="twh-note" style="margin:0 0 6px">FF Scouter (<a href="https://ffscouter.com/" target="_blank" rel="noopener">ffscouter.com</a>) is a separate community site, not part of Torn or this script. Register your Torn API key there once (free, or use Register below). You do <b>not</b> need the FF Scouter userscript. When this is on, your key and the enemy player IDs are sent to ffscouter.com. Read FF Scouter\'s <a href="https://ffscouter.com/" target="_blank" rel="noopener">Data Policy / Terms</a> (on their sign-up page) and <a href="https://ffscouter.com/privacy" target="_blank" rel="noopener">Privacy Policy</a>.</div>' +
+    '<div>FF Scouter key <span class="twh-secsub">(blank = use my Torn key)</span></div><input id="twh-ffskey" name="twh-ffs-key" type="text" style="-webkit-text-security:disc" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" placeholder="same as Torn key">' +
+    '<label class="twh-row"><input type="checkbox" id="twh-ffsagree"> I have read FF Scouter\'s Data Policy</label>' +
+    '<div><button id="twh-ffscheck">Check key</button><button id="twh-ffsreg" title="Registers the key with ffscouter.com (needs the Data Policy box ticked)">Register key</button><button id="twh-ffsclr">Clear FF cache</button></div>' +
+    '<div id="twh-ffsst" style="font-size:12px;margin:4px 0 0"></div>' +
     '<div class="twh-sec">Faction calls <span class="twh-secsub">(message subjects + chat)</span></div>' +
     '<label class="twh-row"><input type="checkbox" id="twh-cstay"> STAY IN HOSP call</label>' + '<div class="twh-arow"><select id="twh-cstaysnd" style="width:auto;max-width:140px;margin:0 6px 0 0;padding:3px">' + sndOpts() + '</select><button data-twhtest="stay">▶ Test</button><input type="range" min="0" max="100" id="twh-cstayvol" style="width:90px;margin:0 0 0 6px;padding:0"></div>' +
     '<label class="twh-row"><input type="checkbox" id="twh-cpush"> PUSH call</label>' + '<div class="twh-arow"><select id="twh-cpushsnd" style="width:auto;max-width:140px;margin:0 6px 0 0;padding:3px">' + sndOpts() + '</select><button data-twhtest="push">▶ Test</button><input type="range" min="0" max="100" id="twh-cpushvol" style="width:90px;margin:0 0 0 6px;padding:0"></div>' +
@@ -1168,10 +1320,20 @@ function ui(){
     '<label class="twh-row"><input type="checkbox" id="twh-hosp2on"> Final alert at <input type="text" id="twh-hosp2at" maxlength="6" inputmode="numeric" title="Minutes:seconds left (0:10 to 60:00)" style="width:58px;margin:0 4px;padding:3px"> left</label>' + '<div class="twh-arow"><select id="twh-hosp2snd" style="width:auto;max-width:140px;margin:0 6px 0 0;padding:3px">' + sndOpts() + '</select><button data-twhtest="hosp2">▶ Test</button><input type="range" min="0" max="100" id="twh-hosp2vol" style="width:90px;margin:0 0 0 6px;padding:0"></div>' +
     '<div class="twh-sec">Custom sounds</div><div class="twh-arow" style="margin-left:0"><span>Add your own sound</span><input type="file" id="twh-sndfile" accept="audio/*" style="max-width:170px;margin:0 0 0 6px;padding:2px"></div><div id="twh-sndlist"></div><div id="twh-sndmsg" style="font-size:12px;color:#9be7a9"></div>' +
     '<div class="twh-sec">Termed war max <span class="twh-secsub">(blank = off)</span></div><label class="twh-row twh-cap">Enemy team max <input id="twh-emax" name="twh-emax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our team max <input id="twh-omax" name="twh-omax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label><label class="twh-row twh-cap">Our player max <input id="twh-pmax" name="twh-pmax" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" data-lpignore="true" data-1p-ignore="true" data-bwignore="true" data-form-type="other" spellcheck="false" style="width:90px"></label>' +
-    '<div class="twh-sec">FAQ</div><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What API key do I need?</summary><div style="padding:2px 0 4px 12px;opacity:.9">A Limited Access key from Torn (Settings &gt; API Keys). Paste it at the top and hit Save.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sound?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Click the page once after it loads (browsers block sound until you do). Check the alert toggles and volume here, and use ▶ Test.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sounds when I switch tabs?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Torn\'s rules don\'t allow alerts from a page you\'re not viewing, so alerts only play while the Torn tab is in front. Missed alerts are not replayed when you come back.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Horn 1 vs Horn 2?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Horn 1 plays when a PUSH call comes in. Horn 2 plays when the push timer hits zero.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How are faction calls detected?</summary><div style="padding:2px 0 4px 12px;opacity:.9">From your Torn message subjects (STAY IN HOSP / PUSH), checked every few seconds with your API key. Optionally also from new chat lines on the war page.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Max points / pink / red numbers?</summary><div style="padding:2px 0 4px 12px;opacity:.9">For termed wars, set the max points. Scores turn pink when near max and bold red at max.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Wide vs side-by-side?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Those checkboxes switch the layout: Wide shows one big table with more columns; side-by-side keeps the two factions next to each other.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Delete stored data &amp; reset?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Wipes everything this script saved, including your API key. Re-enter your key afterwards.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Where is my API key stored?</summary><div style="padding:2px 0 4px 12px;opacity:.9">In your browser only (Tampermonkey storage). It is sent only to api.torn.com. Your sheet link, if you set one, is fetched from Google. Nothing is uploaded with the script.</div></details>' +
+    '<div class="twh-sec">FAQ</div><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What API key do I need?</summary><div style="padding:2px 0 4px 12px;opacity:.9">A Limited Access key from Torn (Settings &gt; API Keys). Paste it at the top and hit Save.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sound?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Click the page once after it loads (browsers block sound until you do). Check the alert toggles and volume here, and use ▶ Test.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why no sounds when I switch tabs?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Torn\'s rules don\'t allow alerts from a page you\'re not viewing, so alerts only play while the Torn tab is in front. Missed alerts are not replayed when you come back.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Horn 1 vs Horn 2?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Horn 1 plays when a PUSH call comes in. Horn 2 plays when the push timer hits zero.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How are faction calls detected?</summary><div style="padding:2px 0 4px 12px;opacity:.9">From your Torn message subjects (STAY IN HOSP / PUSH), checked every few seconds with your API key. Optionally also from new chat lines on the war page.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Max points / pink / red numbers?</summary><div style="padding:2px 0 4px 12px;opacity:.9">For termed wars, set the max points. Scores turn pink when near max and bold red at max.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Wide vs side-by-side?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Those checkboxes switch the layout: Wide shows one big table with more columns; side-by-side keeps the two factions next to each other.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Delete stored data &amp; reset?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Wipes everything this script saved, including your API key. Re-enter your key afterwards.</div></details><details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Where is my API key stored?</summary><div style="padding:2px 0 4px 12px;opacity:.9">In your browser only (Tampermonkey storage). It is sent only to api.torn.com, and to ffscouter.com only if you turn on FF Scouter. Your sheet link, if you set one, is fetched from Google. Nothing is uploaded with the script.</div></details>' +
+    '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How do I turn on FF Scouter?</summary><div style="padding:2px 0 4px 12px;opacity:.9">1) Register your Torn API key on <a href="https://ffscouter.com/" target="_blank" rel="noopener">ffscouter.com</a> once (or tick the Data Policy box under FF Scouter and press Register key). 2) Tick \u201cShow FF Scouter fair fight\u201d. 3) Press Check key: it should say \u201cKey registered\u201d. No FF Scouter userscript is needed. New sign-ups can take about 5 minutes before estimates show.</div></details>' +
+    '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">What do the FF numbers and colors mean?</summary><div style="padding:2px 0 4px 12px;opacity:.9">FF is FF Scouter\'s fair fight estimate for you against that player. Green (under 2) = much weaker than you, yellow (2 to 4) = a good fight, red (4+) = likely much stronger than you. Hover for estimated stats, source, build and how old the estimate is. Faded = older than 14 days. A ~ in front of stats means FF Scouter\'s estimate (your sheet has none for that player). Your sheet\'s stats always come first.</div></details>' +
+    '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">Why did the script stop calling the API?</summary><div style="padding:2px 0 4px 12px;opacity:.9">Torn\'s rules say scripts must stop using a key that is wrong, disabled, paused or whose owner is in federal jail (errors 2, 10, 13, 18). The script stops all Torn calls and the \u2699 button gets a red ring. Fix the key on Torn or paste a new one, then press Save. Error 16 (access level too low) stops only that check (e.g. faction calls need Limited Access). Error 5 (too many requests) pauses for a minute. FF Scouter key problems stop FF Scouter only, until you change its settings or press Check key.</div></details>' +
+    '<details style="margin:2px 0"><summary style="cursor:pointer;font-weight:bold">How is my API key used? (Torn API terms)</summary><div style="padding:2px 0 4px 12px;opacity:.9"><table class="twh-tos">' +
+    '<tr><td>Data Storage</td><td>Only locally (your browser\'s Tampermonkey storage)</td></tr>' +
+    '<tr><td>Data Sharing</td><td>Nobody. Only if you turn on FF Scouter: your FF Scouter key (your Torn key unless you set another) and the enemy player IDs are sent to ffscouter.com (<a href="https://ffscouter.com/" target="_blank" rel="noopener">their Data Policy</a>)</td></tr>' +
+    '<tr><td>Purpose of Use</td><td>Faction war helper (enemy list, hospital timers, faction calls, alerts)</td></tr>' +
+    '<tr><td>Key Storage &amp; Sharing</td><td>Stored locally in the userscript storage, not shared</td></tr>' +
+    '<tr><td>Key Access Level</td><td>Limited Access (needed for faction calls from message subjects; everything else works with Public)</td></tr>' +
+    '</table></div></details>' +
     '<div class="twh-sec">Tools</div><button id="twh-clrsheet">Clear sheet</button><button id="twh-rstmax">Reset max points</button><button id="twh-wipe" style="background:#a02020;color:#fff;border-color:#c03030">Delete stored data &amp; reset</button>' +
     '<div class="twh-st" id="twh-st"></div>' +
-    '<p class="twh-note">Your key stays in your browser (Tampermonkey storage). It is only sent to api.torn.com. The sheet must be shared as "Anyone with the link can view".</p>' +
+    '<p class="twh-note">Your key stays in your browser (Tampermonkey storage). It is only sent to api.torn.com (and to ffscouter.com if you turn on FF Scouter). The sheet must be shared as "Anyone with the link can view".</p>' +
     '<div style="margin-top:10px"><span id="twh-ver" style="font-size:11px;color:#888">Torn War Helper v' + twhVer() + ' · by Everwood [62912]</span></div>';
   document.body.append(b, p);
   b.onclick = () => { p.style.display = p.style.display === 'none' ? 'block' : 'none'; paintPanel(); };
@@ -1235,14 +1397,27 @@ function ui(){
   const cms = p.querySelector('#twh-cmsgs'); cms.value = callMsgSecs();
   const saveCms = () => { const v = Math.round(+cms.value); const c = isFinite(v) && cms.value !== '' ? Math.min(CALL_MSG_MAX, Math.max(CALL_MSG_MIN, v)) : 5; set('callMsgSecs', c); cms.value = c; call.msgNext = Math.min(call.msgNext || 0, Date.now() + c * 1000); };
   cms.onchange = saveCms;
+  // 0.2.69: FF Scouter settings
+  const ffsOnIn = p.querySelector('#twh-ffson'), ffsKeyIn = p.querySelector('#twh-ffskey'), ffsAgree = p.querySelector('#twh-ffsagree'), ffsRegBtn = p.querySelector('#twh-ffsreg');
+  const ffsKick = fn => { if(ffsBusy) return; ffsBusy = true; paintFfs(); (fn || ffsCheck)().finally(() => { ffsBusy = false; ffsNext = 0; try{ paint(); }catch(e){} paintFfs(); }); };
+  ffsOnIn.checked = ffsOn(); ffsKeyIn.value = get('ffsKey', ''); ffsAgree.checked = !!get('ffsAgree', false); ffsRegBtn.disabled = !ffsAgree.checked;
+  ffsOnIn.onchange = () => { set('ffsOn', ffsOnIn.checked); ffsReset(); if(ffsOnIn.checked) ffsKick(); try{ paint(); }catch(e){} paintFfs(); };
+  ffsKeyIn.onchange = () => { const k = ffsKeyIn.value.trim();
+    if(k && !/^[A-Za-z0-9]{16}$/.test(k)){ ffsNote = 'An FF Scouter key is 16 letters/numbers.'; return paintFfs(); }
+    set('ffsKey', k); ffsReset(); if(ffsOn()) ffsKick(); paintFfs(); };
+  ffsAgree.onchange = () => { set('ffsAgree', ffsAgree.checked); ffsRegBtn.disabled = !ffsAgree.checked; };
+  p.querySelector('#twh-ffscheck').onclick = () => { ffsReset(); ffsKick(); };
+  ffsRegBtn.onclick = () => { if(!ffsAgree.checked){ ffsNote = 'Tick the Data Policy box first.'; return paintFfs(); } ffsReset(); ffsKick(ffsRegister); };
+  p.querySelector('#twh-ffsclr').onclick = () => { ffsCache = {}; set('ffsCache', {}); ffsNext = 0; try{ paint(); }catch(e){} paintFfs(); };
   // 0.2.55: Save only for API key + sheet link; shown only when they differ from stored
   const keyIn = p.querySelector('#twh-key'), sheetIn = p.querySelector('#twh-sheet'), saveBtn = p.querySelector('#twh-save'), savedLbl = p.querySelector('#twh-saved');
-  const syncSave = () => { const dirty = keyIn.value.trim() !== apiKey || sheetIn.value.trim() !== sheetUrl || (!apiKey && !sheetUrl) || (!!sheetUrl && get('sheetCleared', false)); saveBtn.style.display = dirty ? '' : 'none'; if(dirty) savedLbl.style.display = 'none'; };
+  const syncSave = () => { const dirty = keyIn.value.trim() !== apiKey || sheetIn.value.trim() !== sheetUrl || (!apiKey && !sheetUrl) || (!!sheetUrl && get('sheetCleared', false)) || !!keyBad || deniedJobs.size > 0; saveBtn.style.display = dirty ? '' : 'none'; if(dirty) savedLbl.style.display = 'none'; };
   keyIn.oninput = syncSave; sheetIn.oninput = syncSave; syncSave();
   saveBtn.onclick = () => {
     const k = keyIn.value.trim(), u = sheetIn.value.trim();
     if(k && !/^[A-Za-z0-9]{16}$/.test(k)){ state.note = 'An API key is 16 letters/numbers.'; return paintPanel(); }
     apiKey = k; sheetUrl = u; set('apiKey', k); set('sheetUrl', u); set('sheetCleared', false);
+    keyBad = null; try{ GM_deleteValue('keyBad'); }catch(e){ set('keyBad', null); } deniedJobs.clear(); apiHold = 0; call.note = '';   // 0.2.69: re-saving the key resumes Torn calls
     try{ paint(); }catch(e){}
     state.myFaction = 0; state.warsAt = 0; state.membersAt = 0; state.note = 'Saved.'; schedule(); paintPanel();
     syncSave(); if(saveBtn.style.display === 'none'){ savedLbl.style.display = ''; setTimeout(() => { savedLbl.style.display = 'none'; }, 2000); }
@@ -1261,7 +1436,7 @@ function ui(){
   // 0.2.58: delete everything this script stores
   p.querySelector('#twh-wipe').onclick = () => {
     if(!confirm('Delete ALL War Helper stored data and reset to defaults?\n\nThis wipes your API key, sheet URL, max points, alert/sound settings and volumes, custom sounds, banner position, call state, and view/sort settings.\n\nTorn\'s data and other scripts are NOT affected. The page will reload.')) return;
-    const known = ['apiKey','key','sheetUrl','sheetCache','sheetCleared','enemyTeamMax','ourTeamMax','playerMax','teamMax','customSounds','bannerPos','callState','view','sort','settings'];
+    const known = ['ffsOn','ffsKey','ffsAgree','ffsCache','ffsStatus','keyBad','apiKey','key','sheetUrl','sheetCache','sheetCleared','enemyTeamMax','ourTeamMax','playerMax','teamMax','customSounds','bannerPos','callState','view','sort','settings'];
     let keys = []; try{ keys = GM_listValues() || []; }catch(e){}
     new Set(keys.concat(known)).forEach(k => { try{ GM_deleteValue(k); }catch(e){} });
     sheet = null; state.sheetNote = ''; state.note = 'All stored data deleted. Reloading...'; try{ paintPanel(); }catch(e){}
@@ -1273,7 +1448,29 @@ function paintPanel(){
   const n = Object.keys(state.members).length;
   el.innerHTML = (state.enemyName ? 'Enemy: <b>' + state.enemyName.replace(/</g, '&lt;') + '</b> (' + n + ' members' + (state.membersAt ? ', updated ' + Math.round((Date.now() - state.membersAt) / 1000) + 's ago' : '') + ')<br>' : '') +
     (state.sheetNote || (sheet ? Object.keys(sheet.players).length + ' players from sheet, synced ' + Math.round((Date.now() - sheet.ts) / 60000) + ' min ago' : '')) +
-    (state.note ? '<br><span style="color:#f0b429">' + state.note.replace(/</g, '&lt;') + '</span>' : '');
+    (state.note ? '<br><span style="color:#f0b429">' + state.note.replace(/</g, '&lt;') + '</span>' : '') +
+    // 0.2.69: key problems
+    (keyBad ? '<br><span style="color:#ff6b6b;font-weight:bold">' + escH(keyBadText()) + '</span>' : '') +
+    (!keyBad && deniedJobs.has('calls') ? '<br><span style="color:#ff6b6b">Faction calls stopped: your key\'s access level is too low (error 16). Save a Limited Access key to resume.</span>' : '') +
+    (!keyBad && [...deniedJobs].some(n => n !== 'calls') ? '<br><span style="color:#ff6b6b">Some checks stopped: key access level too low (error 16). Save a Limited Access key to resume.</span>' : '') +
+    (!keyBad && apiHold > Date.now() ? '<br><span style="color:#f0b429">' + escH(apiHoldWhy) + '</span>' : '');
+  const sb = document.getElementById('twh-save'); if(sb && (keyBad || deniedJobs.size) && sb.style.display === 'none'){ sb.style.display = ''; const sl = document.getElementById('twh-saved'); if(sl) sl.style.display = 'none'; }   // 0.2.69: Save resumes after a key error
+  const b = document.getElementById('twh-btn');
+  if(b){ const bad = !!keyBad; if(b.classList.contains('twh-bad') !== bad){ b.classList.toggle('twh-bad', bad); b.style.boxShadow = bad ? '0 0 0 3px #e53935' : ''; b.title = bad ? 'Torn War Helper: API key problem - open settings' : 'Torn War Helper settings'; } }
+  paintFfs();
+}
+function paintFfs(){
+  const el = document.getElementById('twh-ffsst'); if(!el) return;
+  const st = ffsSt, n = Object.keys(ffsCache).length, k = ffsKey();
+  let h;
+  if(ffsBusy) h = '<span style="color:#9aa6b2">Talking to FF Scouter\u2026</span>';
+  else if(ffsBlocked()) h = '<span style="color:#ff6b6b">Stopped: ' + escH(st.blocked.msg) + '.</span> ' + (st.blocked.code === 6 ? 'Register at <a href="https://ffscouter.com/" target="_blank" rel="noopener">ffscouter.com</a> (or tick the box and press Register key), then press Check key.' : 'Fix it, then press Check key.');
+  else if(st.checked && st.k === ffsTag(k) && st.registered) h = '<span style="color:#5cd65c">\u2713 Key registered</span>' + (st.premium ? ' \u00b7 Premium' + (st.premExp ? ' until ' + new Date(st.premExp * 1000).toLocaleDateString() : '') : ' \u00b7 Free (<a href="https://ffscouter.com/premium" target="_blank" rel="noopener">premium</a> gives better estimates)') + (st.policyUpdate ? ' \u00b7 <span style="color:#f0b429">FF Scouter has a new data policy - review it on their site</span>' : '');
+  else h = ffsOn() ? '<span style="color:#9aa6b2">Key not checked yet (opens the war page to check, or press Check key).</span>' : '';
+  if(!ffsOn()) h = 'Off.' + (h && !/not checked/.test(h) ? ' ' + h : '');
+  else h += ' \u00b7 ' + n + ' players cached';
+  if(ffsNote) h += '<br><span style="color:#f0b429">' + escH(ffsNote) + '</span>';
+  if(el.dataset.h !== h){ el.innerHTML = h; el.dataset.h = h; }
 }
 
 // ---------- 0.2.6: Attack opens in a new tab (only changes the link target; never clicks for you) ----------
@@ -1315,14 +1512,14 @@ document.addEventListener('click', e => {
 const lastRefresh = {};   // one refresh per player per 3s, so a name click + Attack click = one call
 function onPlayerOpen(e){
   if(e.type === 'auxclick' && e.button !== 1) return;
-  const a = e.target.closest && e.target.closest(PROF + ',' + ATK); if(!a || !inWar(a) || !apiKey) return;
+  const a = e.target.closest && e.target.closest(PROF + ',' + ATK); if(!a || !inWar(a) || !keyOk()) return;
   const id = playerIdOf(a); if(!id || Date.now() - (lastRefresh[id] || 0) < 3000) return; lastRefresh[id] = Date.now();
   enqueueFirst('p' + id, () => refreshPlayer(id));
 }
 document.addEventListener('click', onPlayerOpen, true);
 // 0.2.23: plain click anywhere on an enemy row (not a link) refreshes that player, no navigation
 document.addEventListener('click', e => {
-  if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || !apiKey) return;
+  if(e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || !keyOk()) return;
   if(e.target.closest && e.target.closest('a,button,input,select,#twh-panel')) return;
   const row = e.target.closest && e.target.closest('[data-twh-row="enemy"][data-twh-id]'); if(!row) return;
   const id = +row.dataset.twhId; if(!id || Date.now() - (lastRefresh[id] || 0) < 3000) return; lastRefresh[id] = Date.now();
@@ -1344,7 +1541,7 @@ function start(){
   mo.observe(document.body, {childList: true, subtree: true});
   setInterval(tick, 1000);
   setInterval(schedule, 2000);
-  setInterval(scheduleCalls, 250); setInterval(paintCall, 1000); setInterval(checkTimerAlerts, 1000); setInterval(scheduleMe, 2000);
+  setInterval(scheduleCalls, 250); setInterval(paintCall, 1000); setInterval(checkTimerAlerts, 1000); setInterval(scheduleMe, 2000); setInterval(ffsSchedule, 2000);
   chatMo.observe(document.body, {childList: true, subtree: true, characterData: false});
   window.addEventListener('hashchange', () => { schedule(); paint(); });
   schedule(); paint(); fixAttackLinks(); fixProfileLinks();
